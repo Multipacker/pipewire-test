@@ -18,7 +18,11 @@ internal Void pipewire_remove_child(Pipewire_Object *parent, Pipewire_Object *ch
 internal Pipewire_Object *pipewire_create_object(U32 id) {
     Pipewire_Object *object = pipewire_state->object_freelist;
     if (object) {
-        sll_stack_pop(object);
+        sll_stack_pop(pipewire_state->object_freelist);
+
+        U64 generation = object->generation;
+        memory_zero_struct(object);
+        object->generation = generation;
     } else {
         object = arena_push_struct(pipewire_state->arena, Pipewire_Object);
     }
@@ -55,6 +59,7 @@ internal Void pipewire_destroy_object(Pipewire_Object *object) {
         sll_stack_push(pipewire_state->property_freelist, property);
     }
 
+    spa_hook_remove(&object->listener);
     pw_proxy_destroy(object->proxy);
 
     ++object->generation;
@@ -151,7 +156,7 @@ internal Str8 pipewire_string_allocate(Str8 string) {
             chunk = (Pipewire_StringChunkNode *) arena_push_array_no_zero(pipewire_state->arena, U8, size);
         }
     } else if (array_count(pipewire_string_chunk_sizes)) {
-        chunk = pipewire_state->string_chunk_freelist[chunk_index];
+        chunk = pipewire_state->string_chunk_freelist[chunk_index - 1];
         if (chunk) {
             sll_stack_pop(pipewire_state->string_chunk_freelist[chunk_index - 1]);
         } else {
@@ -218,11 +223,13 @@ internal Void pipewire_module_info(Void *data, const struct pw_module_info *info
     printf("  change mask:");
     if (info->change_mask & PW_MODULE_CHANGE_MASK_PROPS)  printf(" PROPS");
     printf("\n");
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(module, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
+    if (info->change_mask & PW_MODULE_CHANGE_MASK_PROPS) {
+        printf("  props:\n");
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(module, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("    %s: \"%s\"\n", item->key, item->value);
+        }
     }
 }
 
@@ -236,11 +243,13 @@ internal Void pipewire_factory_info(Void *data, const struct pw_factory_info *in
     printf("  change mask:");
     if (info->change_mask & PW_FACTORY_CHANGE_MASK_PROPS)  printf(" PROPS");
     printf("\n");
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(factory, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
+    if (info->change_mask & PW_FACTORY_CHANGE_MASK_PROPS) {
+        printf("  props:\n");
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(factory, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("    %s: \"%s\"\n", item->key, item->value);
+        }
     }
 }
 
@@ -250,14 +259,12 @@ internal Void pipewire_client_info(Void *data, const struct pw_client_info *info
     Pipewire_Object *client = (Pipewire_Object *) data;
 
     printf("client: id:%u\n", info->id);
-    printf("  change mask:");
-    if (info->change_mask & PW_CLIENT_CHANGE_MASK_PROPS)  printf(" PROPS");
-    printf("\n");
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(client, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
+    if (info->change_mask & PW_CLIENT_CHANGE_MASK_PROPS) {
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(client, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("  %s: \"%s\"\n", item->key, item->value);
+        }
     }
 }
 
@@ -279,73 +286,77 @@ internal Void pipewire_node_info(Void *data, const struct pw_node_info *info) {
     printf("  n input ports:    %u\n", info->n_input_ports);
     printf("  n output ports:   %u\n", info->n_output_ports);
     printf("  state:            %s\n", pw_node_state_as_string(info->state));
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(node, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
-    }
-    printf("  params:\n");
-    Arena_Temporary scratch = arena_get_scratch(0, 0);
-    U32 *ids = arena_push_array(scratch.arena, U32, info->n_params);
-    for (U32 i = 0; i < info->n_params; ++i) {
-        ids[i] = info->params[i].id;
-    }
-    int error = pw_node_subscribe_params((struct pw_node *) node->proxy, ids, info->n_params);
-    arena_end_temporary(scratch);
-    //int error = pw_node_enum_params((struct pw_node *) node->proxy, 0, PW_ID_ANY, 0, info->n_params, 0);
-    if (error < 0) {
-        printf("ERROR, %s\n", spa_strerror(error));
-    }
-    for (U32 i = 0; i < info->n_params; ++i) {
-        CStr param_id_string = "";
-        switch (info->params[i].id) {
-            case SPA_PARAM_Invalid:        param_id_string = "Invalid";        break;
-            case SPA_PARAM_PropInfo:       param_id_string = "PropInfo";       break;
-            case SPA_PARAM_Props:          param_id_string = "Props";          break;
-            case SPA_PARAM_EnumFormat:     param_id_string = "EnumFormat";     break;
-            case SPA_PARAM_Format:         param_id_string = "Format";         break;
-            case SPA_PARAM_Buffers:        param_id_string = "Buffers";        break;
-            case SPA_PARAM_Meta:           param_id_string = "Meta";           break;
-            case SPA_PARAM_IO:             param_id_string = "IO";             break;
-            case SPA_PARAM_EnumProfile:    param_id_string = "EnumProfile";    break;
-            case SPA_PARAM_Profile:        param_id_string = "Profile";        break;
-            case SPA_PARAM_EnumPortConfig: param_id_string = "EnumPortConfig"; break;
-            case SPA_PARAM_PortConfig:     param_id_string = "PortConfig";     break;
-            case SPA_PARAM_EnumRoute:      param_id_string = "EnumRoute";      break;
-            case SPA_PARAM_Route:          param_id_string = "Route";          break;
-            case SPA_PARAM_Control:        param_id_string = "Control";        break;
-            case SPA_PARAM_Latency:        param_id_string = "Latency";        break;
-            case SPA_PARAM_ProcessLatency: param_id_string = "ProcessLatency"; break;
-            case SPA_PARAM_Tag:            param_id_string = "Tag";            break;
+    if (info->change_mask & PW_NODE_CHANGE_MASK_PROPS) {
+        printf("  props:\n");
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(node, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("    %s: \"%s\"\n", item->key, item->value);
         }
-        printf("    id: %s\n", param_id_string);
-    }
 
-    const struct spa_dict_item *device_id_item = spa_dict_lookup_item(info->props, PW_KEY_DEVICE_ID);
-    const struct spa_dict_item *client_id_item = spa_dict_lookup_item(info->props, PW_KEY_CLIENT_ID);
+        const struct spa_dict_item *device_id_item = spa_dict_lookup_item(info->props, PW_KEY_DEVICE_ID);
+        const struct spa_dict_item *client_id_item = spa_dict_lookup_item(info->props, PW_KEY_CLIENT_ID);
 
-    if (node->parent) {
-        pipewire_remove_child(node->parent, node);
-    }
+        if (node->parent) {
+            pipewire_remove_child(node->parent, node);
+        }
 
-    if (device_id_item) {
-        U32 device_id = 0;
-        if (spa_atou32(device_id_item->value, &device_id, 10)) {
-            Pipewire_Object *device = pipewire_object_from_id(device_id);
-            if (!pipewire_object_is_nil(device)) {
-                pipewire_add_child(device, node);
-                printf("attached node:%u to device:%u\n", node->id, device->id);
+        if (device_id_item) {
+            U32 device_id = 0;
+            if (spa_atou32(device_id_item->value, &device_id, 10)) {
+                Pipewire_Object *device = pipewire_object_from_id(device_id);
+                if (!pipewire_object_is_nil(device)) {
+                    pipewire_add_child(device, node);
+                    printf("attached node:%u to device:%u\n", node->id, device->id);
+                }
+            }
+        } else if (client_id_item) {
+            U32 client_id = 0;
+            if (spa_atou32(client_id_item->value, &client_id, 10)) {
+                Pipewire_Object *client = pipewire_object_from_id(client_id);
+                if (!pipewire_object_is_nil(client)) {
+                    pipewire_add_child(client, node);
+                    printf("attached node:%u to client:%u\n", node->id, client->id);
+                }
             }
         }
-    } else if (client_id_item) {
-        U32 client_id = 0;
-        if (spa_atou32(client_id_item->value, &client_id, 10)) {
-            Pipewire_Object *client = pipewire_object_from_id(client_id);
-            if (!pipewire_object_is_nil(client)) {
-                pipewire_add_child(client, node);
-                printf("attached node:%u to client:%u\n", node->id, client->id);
+    }
+    if (info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) {
+        printf("  params:\n");
+        Arena_Temporary scratch = arena_get_scratch(0, 0);
+        U32 *ids = arena_push_array(scratch.arena, U32, info->n_params);
+        for (U32 i = 0; i < info->n_params; ++i) {
+            ids[i] = info->params[i].id;
+        }
+        int error = pw_node_subscribe_params((struct pw_node *) node->proxy, ids, info->n_params);
+        arena_end_temporary(scratch);
+        //int error = pw_node_enum_params((struct pw_node *) node->proxy, 0, PW_ID_ANY, 0, info->n_params, 0);
+        if (error < 0) {
+            printf("ERROR, %s\n", spa_strerror(error));
+        }
+        for (U32 i = 0; i < info->n_params; ++i) {
+            CStr param_id_string = "";
+            switch (info->params[i].id) {
+                case SPA_PARAM_Invalid:        param_id_string = "Invalid";        break;
+                case SPA_PARAM_PropInfo:       param_id_string = "PropInfo";       break;
+                case SPA_PARAM_Props:          param_id_string = "Props";          break;
+                case SPA_PARAM_EnumFormat:     param_id_string = "EnumFormat";     break;
+                case SPA_PARAM_Format:         param_id_string = "Format";         break;
+                case SPA_PARAM_Buffers:        param_id_string = "Buffers";        break;
+                case SPA_PARAM_Meta:           param_id_string = "Meta";           break;
+                case SPA_PARAM_IO:             param_id_string = "IO";             break;
+                case SPA_PARAM_EnumProfile:    param_id_string = "EnumProfile";    break;
+                case SPA_PARAM_Profile:        param_id_string = "Profile";        break;
+                case SPA_PARAM_EnumPortConfig: param_id_string = "EnumPortConfig"; break;
+                case SPA_PARAM_PortConfig:     param_id_string = "PortConfig";     break;
+                case SPA_PARAM_EnumRoute:      param_id_string = "EnumRoute";      break;
+                case SPA_PARAM_Route:          param_id_string = "Route";          break;
+                case SPA_PARAM_Control:        param_id_string = "Control";        break;
+                case SPA_PARAM_Latency:        param_id_string = "Latency";        break;
+                case SPA_PARAM_ProcessLatency: param_id_string = "ProcessLatency"; break;
+                case SPA_PARAM_Tag:            param_id_string = "Tag";            break;
             }
+            printf("    id: %s\n", param_id_string);
         }
     }
 }
@@ -516,26 +527,28 @@ internal Void pipewire_port_info(Void *data, const struct pw_port_info *info) {
     if (info->change_mask & PW_PORT_CHANGE_MASK_PROPS)  printf(" PROPS");
     if (info->change_mask & PW_PORT_CHANGE_MASK_PARAMS) printf(" PARAMS");
     printf("\n");
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(port, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
-    }
+    if (info->change_mask & PW_PORT_CHANGE_MASK_PROPS) {
+        printf("  props:\n");
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(port, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("    %s: \"%s\"\n", item->key, item->value);
+        }
 
-    const struct spa_dict_item *node_id_item = spa_dict_lookup_item(info->props, PW_KEY_NODE_ID);
+        const struct spa_dict_item *node_id_item = spa_dict_lookup_item(info->props, PW_KEY_NODE_ID);
 
-    if (port->parent) {
-        pipewire_remove_child(port->parent, port);
-    }
+        if (port->parent) {
+            pipewire_remove_child(port->parent, port);
+        }
 
-    if (node_id_item) {
-        U32 node_id = 0;
-        if (spa_atou32(node_id_item->value, &node_id, 10)) {
-            Pipewire_Object *node = pipewire_object_from_id(node_id);
-            if (!pipewire_object_is_nil(node)) {
-                pipewire_add_child(node, port);
-                printf("attached port:%u to node:%u\n", port->id, node->id);
+        if (node_id_item) {
+            U32 node_id = 0;
+            if (spa_atou32(node_id_item->value, &node_id, 10)) {
+                Pipewire_Object *node = pipewire_object_from_id(node_id);
+                if (!pipewire_object_is_nil(node)) {
+                    pipewire_add_child(node, port);
+                    printf("attached port:%u to node:%u\n", port->id, node->id);
+                }
             }
         }
     }
@@ -580,12 +593,16 @@ internal Void pipewire_link_info(Void *data, const struct pw_link_info *info) {
     if (info->change_mask & PW_LINK_CHANGE_MASK_FORMAT) printf(" FORMAT");
     if (info->change_mask & PW_LINK_CHANGE_MASK_PROPS)  printf(" PROPS");
     printf("\n");
-    printf("  state:          %s\n", pw_link_state_as_string(info->state));
-    printf("  props:\n");
-    const struct spa_dict_item *item = 0;
-    spa_dict_for_each(item, info->props) {
-        pipewire_object_update_property(link, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
-        printf("    %s: \"%s\"\n", item->key, item->value);
+    if (info->change_mask & PW_LINK_CHANGE_MASK_STATE) {
+        printf("  state:          %s\n", pw_link_state_as_string(info->state));
+    }
+    if (info->change_mask & PW_LINK_CHANGE_MASK_PROPS) {
+        printf("  props:\n");
+        const struct spa_dict_item *item = 0;
+        spa_dict_for_each(item, info->props) {
+            pipewire_object_update_property(link, str8_cstr((CStr) item->key), str8_cstr((CStr) item->value));
+            printf("    %s: \"%s\"\n", item->key, item->value);
+        }
     }
 }
 
@@ -693,10 +710,13 @@ internal Void pipewire_init(Void) {
 
     // NOTE(simon): Gather all events from the globals.
     pipewire_roundtrip(pipewire_state->core, pipewire_state->loop);
+}
 
-    // NOTE(simon): Gather parameters.
+internal Void pipewire_tick(Void) {
     pipewire_roundtrip(pipewire_state->core, pipewire_state->loop);
+}
 
+internal Void pipewire_deinit(Void) {
     pw_proxy_destroy((struct pw_proxy *) pipewire_state->registry);
     pw_core_disconnect(pipewire_state->core);
     pw_context_destroy(pipewire_state->context);

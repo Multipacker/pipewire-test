@@ -73,7 +73,6 @@ struct Pipewire_Object {
     Pipewire_Property *first_property;
     Pipewire_Property *last_property;
 
-
     struct pw_proxy *proxy;
     struct spa_hook  listener;
 };
@@ -126,6 +125,10 @@ internal Pipewire_Handle  pipewire_handle_from_object(Pipewire_Object *object);
 internal Pipewire_Object *pipewire_object_from_handle(Pipewire_Handle handle);
 
 internal Pipewire_Object *pipewire_object_from_id(U32 id);
+
+internal Void pipewire_init(Void);
+internal Void pipewire_tick(Void);
+internal Void pipewire_deinit(Void);
 
 
 

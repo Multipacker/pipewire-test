@@ -876,5 +876,9 @@ internal Void update(Void) {
         request_frame();
     }
 
+    if (depth == 0) {
+        pipewire_tick();
+    }
+
     ++state->frame_index;
 }

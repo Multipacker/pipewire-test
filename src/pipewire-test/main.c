@@ -105,6 +105,8 @@ internal S32 os_run(Str8List arguments) {
         update();
     }
 
+    pipewire_deinit();
+
     render_destroy(state->window, state->render);
     gfx_window_close(state->window);
 
