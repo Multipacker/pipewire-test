@@ -1,6 +1,18 @@
 #ifndef PIPEWIRE_INCLUDE_H
 #define PIPEWIRE_INCLUDE_H
 
+#undef global
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-statement-expression-from-macro-expansion"
+#pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wc2y-extensions"
+#include <spa/param/format-utils.h>
+#include <spa/utils/result.h>
+#include <spa/debug/pod.h>
+#include <pipewire/pipewire.h>
+#pragma clang diagnostic pop
+#define global static
+
 typedef struct Pipewire_Handle Pipewire_Handle;
 struct Pipewire_Handle {
     U64 u64[2];
