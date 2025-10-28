@@ -281,7 +281,6 @@ internal Void update(Void) {
         }
     }
 
-    V2F32 size = v2f32((F32) client_size.width / 2.0f, (F32) client_size.height);
     F32 row_height = 2.0f * (F32) ui_font_size_top();
 
     // NOTE(simon): Build panel for selected object.
@@ -289,7 +288,7 @@ internal Void update(Void) {
         Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
 
         UI_Key panel_key    = ui_key_from_string(ui_active_seed_key(), str8_literal("object_panel"));
-        V2F32  panel_size   = v2f32(40.0f * (F32) ui_font_size_top(), size.height - 2.0f * row_height);
+        V2F32  panel_size   = v2f32(40.0f * (F32) ui_font_size_top(), (F32) client_size.height - 2.0f * row_height);
         F32    panel_offset = ui_animate(panel_key, !pipewire_object_is_nil(selected_object) * panel_size.width, .initial = 0);
 
         ui_width_next(ui_size_pixels(panel_size.width, 1.0f));
@@ -407,10 +406,11 @@ internal Void update(Void) {
     ui_height(ui_size_fill())
     ui_row() {
         // NOTE(simon): Draw list of all objects.
+        V2F32 list_size = v2f32(25.0f * (F32) ui_font_size_top(), (F32) client_size.height);
         local UI_ScrollPosition scroll_position = { 0 };
         R1S64 visible_range = { 0 };
         ui_palette(palette_from_theme(ThemePalette_Button))
-        ui_scroll_region(size, row_height, object_count, &visible_range, 0, &scroll_position) {
+        ui_scroll_region(list_size, row_height, object_count, &visible_range, 0, &scroll_position) {
             ui_width(ui_size_fill())
             ui_height(ui_size_pixels(row_height, 1.0f))
             for (S64 i = visible_range.min; i < visible_range.max; ++i) {
@@ -420,14 +420,14 @@ internal Void update(Void) {
         }
 
         // NOTE(simon): Build graph.
-        ui_width(ui_size_pixels(size.width, 1.0f));
-        ui_height(ui_size_pixels(size.height, 1.0f));
+        ui_width(ui_size_pixels((F32) client_size.width - list_size.width, 1.0f));
+        ui_height(ui_size_pixels((F32) client_size.height, 1.0f));
         UI_Box *node_graph_box = ui_create_box_from_string(UI_BoxFlag_Clip | UI_BoxFlag_Clickable | UI_BoxFlag_Scrollable, str8_literal("###node_graph"));
         ui_parent(node_graph_box) {
-            V2F32 no_ports_offset     = v2f32(0.0f * size.width / 4.0f, 0.0f);
-            V2F32 only_output_offset  = v2f32(1.0f * size.width / 4.0f, 0.0f);
-            V2F32 input_output_offset = v2f32(2.0f * size.width / 4.0f, 0.0f);
-            V2F32 only_inputs_offset  = v2f32(2.0f * size.width / 4.0f, 0.0f);
+            V2F32 no_ports_offset     = v2f32(0.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+            V2F32 only_output_offset  = v2f32(1.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+            V2F32 input_output_offset = v2f32(2.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+            V2F32 only_inputs_offset  = v2f32(3.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
 
             typedef struct PortNode PortNode;
             struct PortNode {
@@ -439,28 +439,37 @@ internal Void update(Void) {
             PortNode *first_port = 0;
             PortNode *last_port  = 0;
 
-            ui_width(ui_size_children_sum(1.0f))
-            ui_height(ui_size_children_sum(1.0f))
             for (S64 i = 0; i < object_count; ++i) {
                 Pipewire_Object *node = objects[i];
                 if (node->kind != Pipewire_Object_Node) {
                     continue;
                 }
 
-                // NOTE(simon): Count number of input and output ports for this
-                // node.
+                // NOTE(simon): Count number of input and output ports and
+                // determine the maximum width of input and output names.
                 U32 input_port_count  = 0;
                 U32 output_port_count = 0;
+                F32 input_port_name_max_width  = 0.0f;
+                F32 output_port_name_max_width = 0.0f;
                 for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
                     Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
+                    Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
+                    F32 port_name_width = font_cache_size_from_font_text_size(ui_font_top(), port_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
                     if (str8_equal(direction, str8_literal("in"))) {
                         ++input_port_count;
+                        input_port_name_max_width = f32_max(input_port_name_max_width, port_name_width);
                     } else if (str8_equal(direction, str8_literal("out"))) {
                         ++output_port_count;
+                        output_port_name_max_width = f32_max(output_port_name_max_width, port_name_width);
                     }
                 }
 
-                F32 node_height = row_height * (F32) (1 * u32_max(input_port_count, output_port_count));
+                Str8 node_name = name_from_object(node);
+                F32 node_name_width = font_cache_size_from_font_text_size(ui_font_top(), node_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
+
+                // NOTE(simon): Calculate node size.
+                F32 node_width = f32_max(input_port_name_max_width + output_port_name_max_width, node_name_width);
+                F32 node_height = row_height * (F32) (1 + u32_max(input_port_count, output_port_count));
 
                 // NOTE(simon): Grab y offset depending on which ports are
                 // available and increment for next one.
@@ -479,7 +488,8 @@ internal Void update(Void) {
                     input_output_offset.y += node_height + row_height;
                 }
 
-                // NOTE(simon): Grab cached node state.
+                // NOTE(simon): Grab cached node state or create a new one with
+                // default values.
                 GraphNode *graph_node = 0;
                 for (GraphNode *candidate = state->first_node; candidate; candidate = candidate->next) {
                     if (pipewire_object_from_handle(candidate->handle) == node) {
@@ -507,42 +517,52 @@ internal Void update(Void) {
                     ui_palette_next(palette);
                 }
 
+                // NOTE(simon): Build node.
+                ui_corner_radius_next(5.0f);
                 ui_fixed_position_next(v2f32_subtract(graph_node->position, state->graph_offset));
+                ui_width_next(ui_size_pixels(node_width, 1.0f));
+                ui_height_next(ui_size_pixels(node_height, 1.0f));
                 ui_layout_axis_next(Axis2_Y);
                 UI_Box *node_box = ui_create_box_from_string_format(UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clickable, "###node_%u", node->id);
                 ui_parent(node_box)
-                ui_width(ui_size_text_content(0.0f, 1.0f))
-                ui_height(ui_size_text_content(0.0f, 1.0f)) {
+                ui_width(ui_size_fill())
+                ui_height(ui_size_pixels(row_height, 1.0f)) {
+                    ui_text_align_next(UI_TextAlign_Center);
                     ui_label(name_from_object(node));
 
-                    ui_width(ui_size_children_sum(1.0f))
-                    ui_height(ui_size_children_sum(1.0f))
-                    ui_row() {
-                        UI_Box *input_column = ui_column_begin();
-                        ui_column_end();
-                        UI_Box *output_column = ui_column_begin();
-                        ui_column_end();
+                    // NOTE(simon): Build port columns.
+                    UI_Box *input_column  = &global_ui_null_box;
+                    UI_Box *output_column = &global_ui_null_box;
+                    ui_height(ui_size_fill())
+                    ui_row()
+                    ui_layout_axis(Axis2_Y) {
+                        ui_width_next(ui_size_pixels(input_port_name_max_width, 1.0f));
+                        input_column = ui_create_box(0);
+                        ui_spacer_sized(ui_size_fill());
+                        ui_width_next(ui_size_pixels(output_port_name_max_width, 1.0f));
+                        output_column = ui_create_box(0);
+                    }
 
-                        ui_width(ui_size_text_content(0.0f, 1.0f))
-                        ui_height(ui_size_text_content(0.0f, 1.0f))
-                        for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
-                            PortNode *port_node = arena_push_struct(frame_arena(), PortNode);
-                            port_node->port = child;
+                    // NOTE(simon): Build ports.
+                    for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
+                        PortNode *port_node = arena_push_struct(frame_arena(), PortNode);
+                        port_node->port = child;
 
-                            Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
-                            if (str8_equal(direction, str8_literal("in"))) {
-                                ui_parent_next(input_column);
-                                Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
-                                port_node->box = ui_label_format("%.*s###port_%p", str8_expand(port_name), child);
-                            }  else if (str8_equal(direction, str8_literal("out"))) {
-                                ui_parent_next(output_column);
-                                Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
-                                port_node->box = ui_label_format("%.*s###port_%p", str8_expand(port_name), child);
-                            }
+                        Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
+                        Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
 
-                            if (port_node->box) {
-                                dll_push_back(first_port, last_port, port_node);
-                            }
+                        if (str8_equal(direction, str8_literal("in"))) {
+                            ui_parent_next(input_column);
+                            ui_text_align_next(UI_TextAlign_Left);
+                            port_node->box = ui_label_format("%.*s###port_%p", str8_expand(port_name), child);
+                        }  else if (str8_equal(direction, str8_literal("out"))) {
+                            ui_parent_next(output_column);
+                            ui_text_align_next(UI_TextAlign_Right);
+                            port_node->box = ui_label_format("%.*s###port_%p", str8_expand(port_name), child);
+                        }
+
+                        if (port_node->box) {
+                            dll_push_back(first_port, last_port, port_node);
                         }
                     }
                 }
@@ -551,11 +571,11 @@ internal Void update(Void) {
                 if (node_input.flags & UI_InputFlag_Hovering) {
                     state->hovered_object_next = pipewire_handle_from_object(node);
                 }
-                if (node_input.flags & UI_InputFlag_RightClicked) {
+                if (node_input.flags & UI_InputFlag_LeftClicked) {
                     state->selected_object_next = pipewire_handle_from_object(node);
                 }
-                if (node_input.flags & UI_InputFlag_LeftDragging) {
-                    if (node_input.flags & UI_InputFlag_LeftPressed) {
+                if (node_input.flags & UI_InputFlag_RightDragging) {
+                    if (node_input.flags & UI_InputFlag_RightPressed) {
                         V2F32 drag_data = graph_node->position;
                         ui_set_drag_data(&drag_data);
                     }
@@ -566,6 +586,7 @@ internal Void update(Void) {
                 }
             }
 
+            // NOTE(simon): Draw connections.
             Draw_List *connections = draw_list_create();
             draw_list_scope(connections)
             for (S64 i = 0; i < object_count; ++i) {
@@ -574,6 +595,7 @@ internal Void update(Void) {
                     continue;
                 }
 
+                // NOTE(simon): Find input and output ports.
                 PortNode *output_node = 0;
                 PortNode *input_node  = 0;
                 U32 output_port_id = pipewire_object_property_u32_from_name(node, str8_literal("link.output.port"));
@@ -586,6 +608,8 @@ internal Void update(Void) {
                     }
                 }
 
+                // NOTE(simon): Draw two quadratic beziers to approximmate the
+                // look of a cubic beizer between ports.
                 if (output_node && input_node) {
                     R2F32 absolute_output_rectangle = output_node->box->calculated_rectangle;
                     R2F32 absolute_input_rectangle  = input_node->box->calculated_rectangle;
@@ -601,15 +625,15 @@ internal Void update(Void) {
             ui_box_set_draw_list(node_graph_box, connections);
         }
         UI_Input node_graph_input = ui_input_from_box(node_graph_box);
-        state->graph_offset = v2f32_subtract(state->graph_offset, node_graph_input.scroll);
-        if (node_graph_input.flags & UI_InputFlag_MiddleDragging) {
-            if (node_graph_input.flags & UI_InputFlag_MiddlePressed) {
+        state->graph_offset = v2f32_subtract(state->graph_offset, v2f32_scale(node_graph_input.scroll, row_height));
+        if (node_graph_input.flags & UI_InputFlag_RightDragging) {
+            if (node_graph_input.flags & UI_InputFlag_RightPressed) {
                 V2F32 drag_data = state->graph_offset;
                 ui_set_drag_data(&drag_data);
             }
 
             V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
-            V2F32 position_post_drag = v2f32_add(position_pre_drag, ui_drag_delta());
+            V2F32 position_post_drag = v2f32_subtract(position_pre_drag, ui_drag_delta());
             state->graph_offset = position_post_drag;
         }
     }
