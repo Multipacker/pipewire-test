@@ -293,6 +293,19 @@ internal Void update(Void) {
     {
         Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
 
+        // NOTE(simon): Collect all properties.
+        S64 property_count = 0;
+        Pipewire_Property **properties = 0;
+        {
+            for (Pipewire_Property *property = selected_object->first_property; property; property = property->next) {
+                ++property_count;
+            }
+            properties = arena_push_array(frame_arena(), Pipewire_Property *, (U64) property_count);
+            for (Pipewire_Property *property = selected_object->first_property, **propertie_ptr = properties; property; property = property->next) {
+                *propertie_ptr++ = property;
+            }
+        }
+
         UI_Key panel_key    = ui_key_from_string(ui_active_seed_key(), str8_literal("object_panel"));
         V2F32  panel_size   = v2f32(40.0f * (F32) ui_font_size_top(), (F32) client_size.height - 2.0f * row_height);
         F32    panel_offset = ui_animate(panel_key, !pipewire_object_is_nil(selected_object) * panel_size.width, .initial = 0);
@@ -310,17 +323,14 @@ internal Void update(Void) {
 
         ui_parent(panel)
         ui_text_x_padding(5.0f)
-        ui_width(ui_size_fill())
-        ui_height(ui_size_fill()) {
-            ui_height(ui_size_children_sum(1.0f))
+        ui_column() {
+            ui_height(ui_size_pixels(row_height, 1.0f))
             ui_row()
-            ui_width(ui_size_text_content(0, 1.0f))
-            ui_height(ui_size_text_content(0, 1.0f)) {
+            ui_width(ui_size_text_content(0, 1.0f)) {
                 ui_font_next(ui_icon_font());
                 ui_text_x_padding_next(0.0f);
                 ui_text_align_next(UI_TextAlign_Center);
                 ui_width_next(ui_size_ems(1.5f, 1.0f));
-                ui_height_next(ui_size_ems(1.5f, 1.0f));
                 UI_Input close_input = ui_button_format("%.*s###close_panel", str8_expand(ui_icon_string_from_kind(UI_IconKind_Close)));
                 if (close_input.flags & UI_InputFlag_Clicked) {
                     state->selected_object_next = pipewire_handle_from_object(0);
@@ -330,54 +340,13 @@ internal Void update(Void) {
                 ui_label(name_from_object(selected_object));
             }
 
-            ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
+            R1S64 visible_range = { 0 };
+            local UI_ScrollPosition scroll_position = { 0 };
+            ui_palette(palette_from_theme(ThemePalette_Button))
+            ui_scroll_region(v2f32(panel_size.x, panel_size.y - row_height), row_height, property_count, &visible_range, 0, &scroll_position) {
+                for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+                    Pipewire_Property *property = properties[i];
 
-            ui_width(ui_size_text_content(0, 1.0f))
-            ui_height(ui_size_text_content(0, 1.0f))
-            switch (selected_object->kind) {
-                case Pipewire_Object_Null: {
-                } break;
-                case Pipewire_Object_Module: {
-                } break;
-                case Pipewire_Object_Factory: {
-                } break;
-                case Pipewire_Object_Client: {
-                } break;
-                case Pipewire_Object_Device: {
-                } break;
-                case Pipewire_Object_Node: {
-                } break;
-                case Pipewire_Object_Port: {
-                } break;
-                case Pipewire_Object_Link: {
-                } break;
-                case Pipewire_Object_COUNT: {
-                } break;
-            }
-
-            ui_row() {
-                // NOTE(simon): Setup columns.
-                UI_Box *name_column_box  = &global_ui_null_box;
-                UI_Box *value_column_box = &global_ui_null_box;
-                ui_width(ui_size_pixels(panel_size.width / 2.0f, 1.0f))
-                ui_layout_axis(Axis2_Y) {
-                    name_column_box = ui_create_box(0);
-                    value_column_box = ui_create_box(0);
-
-                    ui_width(ui_size_text_content(0, 1.0f))
-                    ui_height(ui_size_text_content(0, 1.0f)) {
-                        ui_parent_next(name_column_box);
-                        ui_label(str8_literal("Name"));
-
-                        ui_parent_next(value_column_box);
-                        ui_label(str8_literal("Value"));
-                    }
-                }
-
-                // NOTE(simon): Build properties.
-                ui_width(ui_size_text_content(0, 1.0f))
-                ui_height(ui_size_text_content(0, 1.0f))
-                for (Pipewire_Property *property = selected_object->first_property; property; property = property->next) {
                     // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
                     Pipewire_Object *reference = &pipewire_nil_object;
                     Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
@@ -392,16 +361,18 @@ internal Void update(Void) {
                         reference = pipewire_object_from_id(id);
                     }
 
-                    ui_parent_next(name_column_box);
-                    ui_label(property->name);
+                    ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(property->name);
 
-                    // NOTE(simon): Create a button if we are a reference.
-                    ui_parent_next(value_column_box);
-                    if (!pipewire_object_is_nil(reference)) {
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(reference);
-                    } else {
-                        ui_label(property->value);
+                        // NOTE(simon): Create a button if we are a reference.
+                        if (!pipewire_object_is_nil(reference)) {
+                            ui_palette_next(palette_from_theme(ThemePalette_Button));
+                            object_button(reference);
+                        } else {
+                            ui_label(property->value);
+                        }
                     }
                 }
             }
@@ -590,11 +561,11 @@ internal Void update(Void) {
                 if (node_input.flags & UI_InputFlag_Hovering) {
                     state->hovered_object_next = pipewire_handle_from_object(node);
                 }
-                if (node_input.flags & UI_InputFlag_LeftClicked) {
+                if (node_input.flags & UI_InputFlag_RightClicked) {
                     state->selected_object_next = pipewire_handle_from_object(node);
                 }
-                if (node_input.flags & UI_InputFlag_RightDragging) {
-                    if (node_input.flags & UI_InputFlag_RightPressed) {
+                if (node_input.flags & UI_InputFlag_LeftDragging) {
+                    if (node_input.flags & UI_InputFlag_LeftPressed) {
                         V2F32 drag_data = graph_node->position;
                         ui_set_drag_data(&drag_data);
                     }
