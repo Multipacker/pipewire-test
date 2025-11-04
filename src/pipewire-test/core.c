@@ -733,7 +733,7 @@ internal Void update(Void) {
         --depth;
     }
 
-    UI_EventList ui_events = { 0 };
+
 
     // NOTE(simon): Consume events.
     for (Gfx_Event *event = graphics_events.first, *next = 0; event; event = next) {
@@ -769,8 +769,8 @@ internal Void update(Void) {
             ui_event->key       = event->key;
             ui_event->modifiers = event->key_modifiers;
 
-            if (ui_event->kind != UI_EventKind_Null) {
-                ui_event_list_push_event(&ui_events, ui_event);
+            if (ui_event->kind != UI_EventKind_Null && !is_nil_window(window)) {
+                ui_event_list_push_event(&window->ui_events, ui_event);
             }
         }
 
@@ -837,7 +837,7 @@ internal Void update(Void) {
         R2F32 client_rectangle = r2f32(0.0f, 0.0f, (F32) client_size.x, (F32) client_size.y);
 
         ui_select_state(window->ui);
-        ui_begin(window->window, &ui_events, &icon_info, 1.0f / 60.0f);
+        ui_begin(window->window, &window->ui_events, &icon_info, 1.0f / 60.0f);
         ui_palette_push(palette_from_theme(ThemePalette_Base));
         ui_font_push(font_cache_font_from_static_data(&default_font));
         ui_font_size_push((U32) (state->font_size * gfx_dpi_from_window(window->window) / 72.0f));
@@ -849,19 +849,15 @@ internal Void update(Void) {
         ui_palette_pop();
         ui_end();
 
+        memory_zero_struct(&window->ui_events);
+
         if (ui_is_animating_from_context(window->ui)) {
             request_frame();
         }
-    }
 
-    // NOTE(simon): Draw UI.
-    render_begin();
-    for (Window *window = state->first_window; window; window = window->next) {
-        V2U32 client_size      = gfx_client_area_from_window(window->window);
-        R2F32 client_rectangle = r2f32(0.0f, 0.0f, (F32) client_size.x, (F32) client_size.y);
-
-        Draw_List *draw_list = draw_list_create();
-        draw_list_scope(draw_list) {
+        // NOTE(simon): Draw UI.
+        window->draw_list = draw_list_create();
+        draw_list_scope(window->draw_list) {
             // NOTE(simon): Draw background.
             draw_rectangle(client_rectangle, color_from_theme(ThemeColor_BaseBackground), 0, 0, 0);
 
@@ -1059,12 +1055,20 @@ internal Void update(Void) {
                 box = iterator.next;
             }
         }
+    }
 
+
+
+    // NOTE(simon): Draw UI.
+    prof_zone_begin(prof_zone_render, "render");
+    render_begin();
+    for (Window *window = state->first_window; window; window = window->next) {
         render_window_begin(window->window, window->render);
-        draw_submit_list(window->window, window->render, draw_list);
+        draw_submit_list(window->window, window->render, window->draw_list);
         render_window_end(window->window, window->render);
     }
     render_end();
+    prof_zone_end(prof_zone_render);
 
     // NOTE(simon): Evict untouched entries from graph node cache.
     for (GraphNode *node = state->first_node, *next = 0; node; node = next) {
@@ -1089,4 +1093,6 @@ internal Void update(Void) {
     }
 
     ++state->frame_index;
+
+    prof_frame_done();
 }

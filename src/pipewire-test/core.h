@@ -131,6 +131,9 @@ struct Window {
     Gfx_Window     window;
     Render_Window  render;
     UI_Context    *ui;
+
+    Draw_List   *draw_list;
+    UI_EventList ui_events;
 };
 
 global Window nil_window = { 0 };

@@ -92,7 +92,6 @@ internal S32 os_run(Str8List arguments) {
     render_init();
 
     create_window(str8_literal("Pipewire-test"), 1280, 720);
-    create_window(str8_literal("Pipewire-test"), 1280, 720);
 
     font_cache_create();
     gfx_set_update_function(update);
