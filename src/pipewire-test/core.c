@@ -322,8 +322,7 @@ internal Void update(Void) {
         );
 
         ui_parent(panel)
-        ui_text_x_padding(5.0f)
-        ui_column() {
+        ui_text_x_padding(5.0f) {
             ui_height(ui_size_pixels(row_height, 1.0f))
             ui_row()
             ui_width(ui_size_text_content(0, 1.0f)) {
@@ -340,38 +339,164 @@ internal Void update(Void) {
                 ui_label(name_from_object(selected_object));
             }
 
-            R1S64 visible_range = { 0 };
-            local UI_ScrollPosition scroll_position = { 0 };
-            ui_palette(palette_from_theme(ThemePalette_Button))
-            ui_scroll_region(v2f32(panel_size.x, panel_size.y - row_height), row_height, property_count, &visible_range, 0, &scroll_position) {
-                for (S64 i = visible_range.min; i < visible_range.max; ++i) {
-                    Pipewire_Property *property = properties[i];
+            if (selected_object->kind == Pipewire_Object_Module) {
+                ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                ui_height(ui_size_pixels(row_height, 1.0f)) {
+                    Str8 name        = pipewire_object_property_string_from_name(selected_object, str8_literal("module.name"));
+                    Str8 author      = pipewire_object_property_string_from_name(selected_object, str8_literal("module.author"));
+                    Str8 description = pipewire_object_property_string_from_name(selected_object, str8_literal("module.description"));
+                    Str8 usage       = pipewire_object_property_string_from_name(selected_object, str8_literal("module.usage"));
+                    Str8 version     = pipewire_object_property_string_from_name(selected_object, str8_literal("module.version"));
 
-                    // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
-                    Pipewire_Object *reference = &pipewire_nil_object;
-                    Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
-                    if (
-                        str8_equal(last_component, str8_literal("id")) ||
-                        str8_equal(last_component, str8_literal("client")) ||
-                        str8_equal(last_component, str8_literal("device")) ||
-                        str8_equal(last_component, str8_literal("node")) ||
-                        str8_equal(last_component, str8_literal("port"))
-                    ) {
-                        U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
-                        reference = pipewire_object_from_id(id);
+                    ui_label_format("%.*s v%.*s", str8_expand(name), str8_expand(version));
+
+                    if (author.size) {
+                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                        ui_label(str8_literal("Author"));
+                        ui_label(author);
                     }
 
-                    ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                    if (description.size) {
+                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                        ui_label(str8_literal("Description"));
+                        ui_label(description);
+                    }
+
+                    if (usage.size) {
+                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                        ui_label(str8_literal("Usage"));
+                        ui_font_next(font_cache_font_from_static_data(&mono_font));
+                        ui_label(usage);
+                    }
+                }
+            } else if (selected_object->kind == Pipewire_Object_Factory) {
+                ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                ui_height(ui_size_pixels(row_height, 1.0f)) {
+                    Str8 name         = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.name"));
+                    Str8 type_name    = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.name"));
+                    Str8 type_version = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.version"));
+                    Str8 usage        = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.usage"));
+                    U32  module_id    = pipewire_object_property_u32_from_name(selected_object, str8_literal("module.id"));
+
+                    ui_label(name);
+
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Creates"));
+                    ui_label_format("%.*s v%.*s", str8_expand(type_name), str8_expand(type_version));
+
+                    Pipewire_Object *module = pipewire_object_from_id(module_id);
+                    if (!pipewire_object_is_nil(module)) {
+                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                        ui_row()
+                        ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                            ui_label(str8_literal("Module"));
+                            ui_palette_next(palette_from_theme(ThemePalette_Button));
+                            object_button(module);
+                        }
+                    }
+
+                    if (usage.size) {
+                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                        ui_label(str8_literal("Usage"));
+                        ui_font_next(font_cache_font_from_static_data(&mono_font));
+                        ui_label(usage);
+                    }
+                }
+            } else if (selected_object->kind == Pipewire_Object_Link) {
+                ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                ui_height(ui_size_pixels(row_height, 1.0f)) {
+                    U32 output_node_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.node"));
+                    U32 output_port_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.port"));
+                    U32 input_node_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.node"));
+                    U32 input_port_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.port"));
+                    U32 factory_id     = pipewire_object_property_u32_from_name(selected_object, str8_literal("factory.id"));
+                    U32 client_id      = pipewire_object_property_u32_from_name(selected_object, str8_literal("client.id"));
+
+                    Pipewire_Object *output_node = pipewire_object_from_id(output_node_id);
+                    Pipewire_Object *output_port = pipewire_object_from_id(output_port_id);
+                    Pipewire_Object *input_node  = pipewire_object_from_id(input_node_id);
+                    Pipewire_Object *input_port  = pipewire_object_from_id(input_port_id);
+                    Pipewire_Object *factory     = pipewire_object_from_id(factory_id);
+                    Pipewire_Object *client      = pipewire_object_from_id(client_id);
+
+                    ui_label(str8_literal("Ownership"));
                     ui_row()
                     ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(property->name);
+                        ui_label(str8_literal("Client"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(client);
+                    }
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Factory"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(factory);
+                    }
 
-                        // NOTE(simon): Create a button if we are a reference.
-                        if (!pipewire_object_is_nil(reference)) {
-                            ui_palette_next(palette_from_theme(ThemePalette_Button));
-                            object_button(reference);
-                        } else {
-                            ui_label(property->value);
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Output"));
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Node"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(output_node);
+                    }
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Port"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(output_port);
+                    }
+
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Input"));
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Node"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(input_node);
+                    }
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Port"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(input_port);
+                    }
+                }
+            } else {
+                R1S64 visible_range = { 0 };
+                local UI_ScrollPosition scroll_position = { 0 };
+                ui_palette(palette_from_theme(ThemePalette_Button))
+                ui_scroll_region(v2f32(panel_size.x, panel_size.y - row_height), row_height, property_count, &visible_range, 0, &scroll_position) {
+                    for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+                        Pipewire_Property *property = properties[i];
+
+                        // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
+                        Pipewire_Object *reference = &pipewire_nil_object;
+                        Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
+                        if (
+                            str8_equal(last_component, str8_literal("id")) ||
+                            str8_equal(last_component, str8_literal("client")) ||
+                            str8_equal(last_component, str8_literal("device")) ||
+                            str8_equal(last_component, str8_literal("node")) ||
+                            str8_equal(last_component, str8_literal("port"))
+                        ) {
+                            U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
+                            reference = pipewire_object_from_id(id);
+                        }
+
+                        ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                        ui_row()
+                        ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                            ui_label(property->name);
+
+                            // NOTE(simon): Create a button if we are a reference.
+                            if (!pipewire_object_is_nil(reference)) {
+                                ui_palette_next(palette_from_theme(ThemePalette_Button));
+                                object_button(reference);
+                            } else {
+                                ui_label(property->value);
+                            }
                         }
                     }
                 }

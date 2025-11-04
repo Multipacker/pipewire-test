@@ -8,6 +8,7 @@
 // NOTE(simon): Fonts and icons.
 
 embed_file(default_font, "/data/NotoSans-Regular.ttf");
+embed_file(mono_font, "/data/NotoSansMono-Regular.ttf");
 
 embed_file(icon_font, "/data/fontello/fontello.ttf");
 global Str8 icon_kind_text[] = {
