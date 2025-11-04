@@ -1486,8 +1486,7 @@ internal V2F32 gfx_mouse_position_from_window(Gfx_Window handle) {
     Wayland_State *state = &global_wayland_state;
     Wayland_Window *window = wayland_window_from_handle(handle);
 
-    // TODO(simon): Maybe we should return a point that is not inside of the window.
-    V2F32 result = { 0 };
+    V2F32 result = v2f32(-1000.0f, -1000.0f);
     if (state->pointer_window == window) {
         result = state->pointer_position;
     }

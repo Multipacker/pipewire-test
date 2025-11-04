@@ -1146,7 +1146,7 @@ internal V2F32 gfx_mouse_position_from_window(Gfx_Window handle) {
     xcb_query_pointer_cookie_t cookie = xcb_query_pointer(state->connection, window->window);
     xcb_query_pointer_reply_t *reply = xcb_query_pointer_reply(state->connection, cookie, 0);
 
-    V2F32 result = { 0 };
+    V2F32 result = v2f32(-1000.0f, -1000.0f);
     if (reply) {
         if (reply->same_screen) {
             result.x = reply->win_x;
