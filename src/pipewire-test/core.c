@@ -982,6 +982,7 @@ internal Void update(Void) {
         B32 consume = false;
 
         if (event->kind == Gfx_EventKind_Quit) {
+            consume = true;
             destroy_window(window);
         } else if (event->kind == Gfx_EventKind_KeyPress || event->kind == Gfx_EventKind_KeyRelease || event->kind == Gfx_EventKind_Text || event->kind == Gfx_EventKind_Scroll) {
             consume = true;

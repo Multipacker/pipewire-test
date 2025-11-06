@@ -155,7 +155,7 @@ internal Str8 pipewire_string_allocate(Str8 string) {
             U64 size = u64_ceil_to_power_of_2(string.size);
             chunk = (Pipewire_StringChunkNode *) arena_push_array_no_zero(pipewire_state->arena, U8, size);
         }
-    } else if (array_count(pipewire_string_chunk_sizes)) {
+    } else if (chunk_index != 0) {
         chunk = pipewire_state->string_chunk_freelist[chunk_index - 1];
         if (chunk) {
             sll_stack_pop(pipewire_state->string_chunk_freelist[chunk_index - 1]);
