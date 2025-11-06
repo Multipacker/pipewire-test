@@ -13,6 +13,8 @@ internal Arena *arena_create_reserve(U64 reserve_size) {
     result->position         = sizeof(Arena);
     result->commit_position  = initial_commit;
 
+    memory_poison(memory + sizeof(Arena), reserve_size - sizeof(Arena));
+
     return result;
 }
 
@@ -38,8 +40,11 @@ internal Void *arena_push_no_zero(Arena *arena, U64 size, U64 alignment) {
             U64 next_commit_position = u64_min(position_aligned, arena->capacity);
             U64 commit_size          = next_commit_position - arena->commit_position;
             os_memory_commit(arena->memory + arena->commit_position, commit_size);
+            memory_poison(arena->memory + arena->commit_position, commit_size);
             arena->commit_position = next_commit_position;
         }
+
+        memory_unpoison(result, size);
     }
 
     return result;
@@ -49,7 +54,10 @@ internal Void arena_pop_to(Arena *arena, U64 position) {
     position = u64_max(sizeof(Arena), position);
 
     if (position < arena->position) {
+        U64 delta = arena->position - position;
         arena->position = position;
+
+        memory_poison(arena->memory + arena->position, delta);
 
         U64 position_aligned     = u64_round_up_to_power_of_2(arena->position, ARENA_COMMIT_BLOCK_SIZE);
         U64 next_commit_position = u64_min(position_aligned, arena->capacity);

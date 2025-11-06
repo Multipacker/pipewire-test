@@ -1,6 +1,8 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+#include <sanitizer/asan_interface.h>
+
 typedef struct {
     U8 *memory;
     U64 capacity;
@@ -49,5 +51,8 @@ internal U64 circular_buffer_write(Void *buffer, U64 buffer_size, U64 buffer_pos
 
 #define circular_buffer_write_type(buffer, buffer_size, buffer_position, type) circular_buffer_write(buffer, buffer_size, buffer_position, type, sizeof(type));
 #define circular_buffer_read_type(buffer, buffer_size, buffer_position, type)  circular_buffer_read(buffer, buffer_size, buffer_position, type, sizeof(type));
+
+#define memory_poison(ptr, size)   ASAN_POISON_MEMORY_REGION(ptr, size)
+#define memory_unpoison(ptr, size) ASAN_UNPOISON_MEMORY_REGION(ptr, size)
 
 #endif // MEMORY_H
