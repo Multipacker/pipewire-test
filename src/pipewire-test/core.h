@@ -153,6 +153,8 @@ struct Panel {
     F32   percentage_of_parent;
     Axis2 split_axis;
     U64   child_count;
+
+    R2F32 animated_rectangle_percentage;
 };
 
 typedef struct PanelIterator PanelIterator;
@@ -186,6 +188,7 @@ struct Window {
     UI_Context    *ui;
 
     Panel *root_panel;
+    Handle active_panel;
 
     Draw_List   *draw_list;
     UI_EventList ui_events;
@@ -193,6 +196,56 @@ struct Window {
 
 global Window nil_window = {
     .root_panel = &nil_panel,
+};
+
+#define CONTEXT_MEMBERS(X)                               \
+    X(Handle,     tab,                Tab)               \
+    X(Handle,     panel,              Panel)             \
+    X(Handle,     window,             Window)            \
+    X(Handle,     previous_tab,       PreviousTab)       \
+    X(Handle,     destination_panel,  DestinationPanel)  \
+    X(Handle,     destination_window, DestinationWindow) \
+    X(Direction2, direction,          Direction)
+
+typedef enum {
+    ContextMember_Null,
+#define X(type, name, type_name) ContextMember_##type_name,
+    CONTEXT_MEMBERS(X)
+#undef X
+    ContextMember_COUNT,
+} ContextMember;
+
+typedef struct Context Context;
+struct Context {
+    Context *next;
+
+#define X(type, name, type_name) type name;
+    CONTEXT_MEMBERS(X)
+#undef X
+};
+
+#define COMMANDS(X)                                                         \
+    X(NextTab,         "Next Tab",          "Switch to the next tab")       \
+    X(PreviousTab,     "Previous Tab",      "Switch to the previous tab")   \
+    X(FocusPanelLeft,  "Focus panel left",  "Focus the panel above")        \
+    X(FocusPanelUp,    "Focus panel up",    "Focus the panel on the left")  \
+    X(FocusPanelRight, "Focus panel right", "Focus the panel on the right") \
+    X(FocusPanelDown,  "Focus panel down",  "Focus the panel below")        \
+    X(FocusPanel,      "Focus panel",       "")
+
+typedef enum {
+    CommandKind_Null,
+#define X(name, display_name, description) CommandKind_##name,
+    COMMANDS(X)
+#undef X
+    CommandKind_COUNT,
+} CommandKind;
+
+typedef struct Command Command;
+struct Command {
+    Command    *next;
+    CommandKind kind;
+    Context    *context;
 };
 
 typedef struct State State;
@@ -211,8 +264,17 @@ struct State {
     Panel  *panel_freelist;
     Window *window_freelist;
 
+    // NOTE(simon): Commands
+    Arena   *command_arena;
+    Command *first_command;
+    Command *last_command;
+
     Theme theme;
     UI_Palette palettes[ThemePalette_COUNT];
+
+    // NOTE(simon): Contexts (per frame)
+    Context  base_context;
+    Context *context_stack;
 
     F32 font_size;
 
@@ -241,6 +303,22 @@ internal Arena *frame_arena(Void);
 internal Str8     kind_from_object(Pipewire_Object *object);
 internal Str8     name_from_object(Pipewire_Object *object);
 internal UI_Input object_button(Pipewire_Object *object);
+
+// NOTE(simon): Context.
+
+#define CONTEXT_VALUE(type, name, type_name) .name = top_context()->name,
+#define top_context_values CONTEXT_MEMBERS(CONTEXT_VALUE)
+#define push_context(...) push_context_internal(&(Context) { top_context_values __VA_ARGS__ })
+#define context_scope(...) defer_loop(push_context(__VA_ARGS__), pop_context())
+internal Context *copy_context(Arena *arena, Context *context);
+internal Void     push_context_internal(Context *context);
+internal Void     pop_context(Void);
+internal Context *top_context(Void);
+
+// NOTE(simon): Commands.
+
+#define push_command(kind, ...) push_command_internal(kind, &(Context) { top_context_values __VA_ARGS__ })
+internal Void push_command_internal(CommandKind kind, Context *context);
 
 // NOTE(simon): Tabs.
 

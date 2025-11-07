@@ -25,6 +25,42 @@ internal Arena *frame_arena(Void) {
 
 
 
+// NOTE(simon): Context.
+
+internal Context *copy_context(Arena *arena, Context *context) {
+    Context *copy = arena_push_struct(arena, Context);
+    *copy = *context;
+    copy->next = 0;
+    return copy;
+}
+
+internal Void push_context_internal(Context *context) {
+    Context *copy = copy_context(frame_arena(), context);
+    sll_stack_push(state->context_stack, copy);
+}
+
+internal Void pop_context(Void) {
+    sll_stack_pop(state->context_stack);
+}
+
+internal Context *top_context(Void) {
+    Context *result = state->context_stack;
+    return result;
+}
+
+
+
+// NOTE(simon): Commands.
+
+internal Void push_command_internal(CommandKind kind, Context *context) {
+    Command *command = arena_push_struct(state->command_arena, Command);
+    command->kind = kind;
+    command->context = copy_context(state->command_arena, context);
+    sll_queue_push(state->first_command, state->last_command, command);
+}
+
+
+
 // NOTE(simon): Tabs.
 
 internal Handle handle_from_tab(Tab *tab) {
@@ -958,6 +994,10 @@ internal Void update(Void) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     arena_reset(frame_arena());
 
+    // NOTE(simon): Setup base context.
+    memory_zero_struct(&state->base_context);
+    state->context_stack = &state->base_context;
+
     state->selected_object = state->selected_object_next;
     state->hovered_object  = state->hovered_object_next;
     memory_zero_struct(&state->hovered_object_next);
@@ -967,6 +1007,50 @@ internal Void update(Void) {
         ++depth;
         graphics_events = gfx_get_events(scratch.arena, state->frames_to_render == 0);
         --depth;
+    }
+
+
+
+    // NOTE(simon): Process key bindings.
+    typedef struct Binding Binding;
+    struct Binding {
+        Gfx_Key         key;
+        Gfx_KeyModifier modifiers;
+        CommandKind     command_kind;
+    };
+
+    Binding bindings[] = {
+        { Gfx_Key_Tab, Gfx_KeyModifier_Control,                         CommandKind_NextTab,         },
+        { Gfx_Key_Tab, Gfx_KeyModifier_Shift | Gfx_KeyModifier_Control, CommandKind_PreviousTab,     },
+        { Gfx_Key_H,   Gfx_KeyModifier_Control,                         CommandKind_FocusPanelLeft,  },
+        { Gfx_Key_J,   Gfx_KeyModifier_Control,                         CommandKind_FocusPanelDown,  },
+        { Gfx_Key_K,   Gfx_KeyModifier_Control,                         CommandKind_FocusPanelUp,    },
+        { Gfx_Key_L,   Gfx_KeyModifier_Control,                         CommandKind_FocusPanelRight, },
+    };
+
+    for (Gfx_Event *event = graphics_events.first, *next = 0; event; event = next) {
+        next = event->next;
+
+        if (event->kind != Gfx_EventKind_KeyPress) {
+            continue;
+        }
+
+        for (U64 i = 0; i < array_count(bindings); ++i) {
+            Binding binding = bindings[i];
+            if (event->key == binding.key && event->key_modifiers == binding.modifiers) {
+                Window *window = window_from_gfx_handle(event->window);
+                Panel  *panel  = panel_from_handle(window->active_panel);
+                Tab    *tab    = tab_from_handle(panel->active_tab);
+                push_command(
+                    binding.command_kind,
+                    .window = handle_from_window(window),
+                    .panel  = handle_from_panel(panel),
+                    .tab    = handle_from_tab(tab),
+                );
+                dll_remove(graphics_events.first, graphics_events.last, event);
+                break;
+            }
+        }
     }
 
 
@@ -1016,6 +1100,127 @@ internal Void update(Void) {
         }
     }
 
+
+
+    // NOTE(simon): Execute commands.
+    if (depth == 0) {
+        if (state->first_command) {
+            request_frame();
+        }
+
+        for (Command *command = state->first_command; command; command = command->next) {
+            push_context_internal(command->context);
+
+            switch (command->kind) {
+                case CommandKind_Null: {
+                } break;
+                case CommandKind_NextTab: {
+                    Panel *panel = panel_from_handle(top_context()->panel);
+                    Tab   *tab   = tab_from_handle(top_context()->tab);
+                    if (!is_nil_panel(panel) && !is_nil_tab(tab)) {
+                        Tab *next_active_tab = panel->first_tab;
+                        if (!is_nil_tab(tab->next)) {
+                            next_active_tab = tab->next;
+                        }
+                        panel->active_tab = handle_from_tab(next_active_tab);
+                    }
+                } break;
+                case CommandKind_PreviousTab: {
+                    Panel *panel = panel_from_handle(top_context()->panel);
+                    Tab   *tab   = tab_from_handle(top_context()->tab);
+                    if (!is_nil_panel(panel) && !is_nil_tab(tab)) {
+                        Tab *next_active_tab = panel->last_tab;
+                        if (!is_nil_tab(tab->previous)) {
+                            next_active_tab = tab->previous;
+                        }
+                        panel->active_tab = handle_from_tab(next_active_tab);
+                    }
+                } break;
+                case CommandKind_FocusPanelLeft:
+                case CommandKind_FocusPanelUp:
+                case CommandKind_FocusPanelRight:
+                case CommandKind_FocusPanelDown: {
+                    // NOTE(simon): Extract direction and side from direction.
+                    Axis2 movement_axis = Axis2_Invalid;
+                    Side  movement_side = Side_Invalid;
+                    if (command->kind == CommandKind_FocusPanelLeft || command->kind == CommandKind_FocusPanelRight) {
+                        movement_axis = Axis2_X;
+                    }
+                    if (command->kind == CommandKind_FocusPanelUp || command->kind == CommandKind_FocusPanelDown) {
+                        movement_axis = Axis2_Y;
+                    }
+                    if (command->kind == CommandKind_FocusPanelLeft || command->kind == CommandKind_FocusPanelUp) {
+                        movement_side = Side_Min;
+                    }
+                    if (command->kind == CommandKind_FocusPanelRight || command->kind == CommandKind_FocusPanelDown) {
+                        movement_side = Side_Max;
+                    }
+
+                    // TODO(simon): This should not be based on animation state
+                    // as that is less predictable and not consistent unless
+                    // you wait out the animations.
+
+                    Window *window       = window_from_handle(top_context()->window);
+                    Panel  *panel        = panel_from_handle(top_context()->panel);
+                    V2F32   panel_center = r2f32_center(panel->animated_rectangle_percentage);
+                    Panel  *sibling      = panel;
+
+                    // NOTE(simon): Find the closest sibling along our movement axis.
+                    if (!is_nil_panel(panel)) {
+                        if (movement_side == Side_Min) {
+                            while (!is_nil_panel(sibling->parent) && !(sibling->parent->split_axis == movement_axis && !is_nil_panel(sibling->previous))) {
+                                sibling = sibling->parent;
+                            }
+
+                            sibling = sibling->previous;
+                        } else if (movement_side == Side_Max) {
+                            while (!is_nil_panel(sibling->parent) && !(sibling->parent->split_axis == movement_axis && !is_nil_panel(sibling->next))) {
+                                sibling = sibling->parent;
+                            }
+
+                            sibling = sibling->next;
+                        }
+                    }
+
+                    // NOTE(simon): Find the closest child in the selected sibling.
+                    Panel *best_child = sibling;
+                    F32 best_distance = f32_infinity();
+                    for (Panel *child = sibling; !is_nil_panel(child); child = panel_iterator_depth_first_pre_order(child, sibling).next) {
+                        if (!is_nil_panel(child->first)) {
+                            continue;
+                        }
+
+                        V2F32 child_center = r2f32_center(child->animated_rectangle_percentage);
+                        F32   distance     = f32_abs(panel_center.x - child_center.x) + f32_abs(panel_center.y - child_center.y);
+
+                        if (distance < best_distance) {
+                            best_distance = distance;
+                            best_child    = child;
+                        }
+                    }
+
+                    if (!is_nil_panel(best_child) && !is_nil_window(window)) {
+                        window->active_panel = handle_from_panel(best_child);
+                    }
+                } break;
+                case CommandKind_FocusPanel: {
+                    Window *window = window_from_handle(top_context()->window);
+                    if (!is_nil_window(window)) {
+                        window->active_panel = top_context()->panel;
+                    }
+                } break;
+                case CommandKind_COUNT: {
+                } break;
+            }
+
+            pop_context();
+        }
+
+        // NOTE(simon): Reset command state.
+        arena_reset(state->command_arena);
+        state->first_command = 0;
+        state->last_command  = 0;
+    }
 
 
     // NOTE(simon): Update window.
@@ -1070,6 +1275,8 @@ internal Void update(Void) {
     icon_info.icon_kind_text[UI_IconKind_Folder]     = icon_kind_text[UI_IconKind_Folder];
 
     for (Window *window = state->first_window; window; window = window->next) {
+        push_context(.window = handle_from_window(window), .panel = window->active_panel, .tab = panel_from_handle(window->active_panel)->active_tab);
+
         V2U32 client_size      = gfx_client_area_from_window(window->window);
         R2F32 client_rectangle = r2f32(0.0f, 0.0f, (F32) client_size.x, (F32) client_size.y);
 
@@ -1147,6 +1354,35 @@ internal Void update(Void) {
         }
         prof_zone_end(prof_bulid_non_leaf_ui);
 
+        // NOTE(simon): Animate panels.
+        // TODO(simon): This shouldn't animate if we are resizing panels.
+        for (Panel *panel = window->root_panel; !is_nil_panel(panel); panel = panel_iterator_depth_first_pre_order(panel, &nil_panel).next) {
+            R2F32 target = rectangle_from_panel(panel, content_rectangle);
+            R2F32 target_percentage = r2f32(
+                target.min.x / content_size.width,
+                target.min.y / content_size.height,
+                target.max.x / content_size.width,
+                target.max.y / content_size.height
+            );
+
+            B32 is_animating = false;
+            is_animating |= f32_abs(target.min.x - panel->animated_rectangle_percentage.min.x * content_size.width)  > 0.5f;
+            is_animating |= f32_abs(target.min.y - panel->animated_rectangle_percentage.min.y * content_size.height) > 0.5f;
+            is_animating |= f32_abs(target.max.x - panel->animated_rectangle_percentage.max.x * content_size.width)  > 0.5f;
+            is_animating |= f32_abs(target.max.y - panel->animated_rectangle_percentage.max.y * content_size.height) > 0.5f;
+
+            if (is_animating) {
+                F32 rate = ui_animation_fast_rate();
+                panel->animated_rectangle_percentage.min.x += (target_percentage.min.x - panel->animated_rectangle_percentage.min.x) * rate;
+                panel->animated_rectangle_percentage.min.y += (target_percentage.min.y - panel->animated_rectangle_percentage.min.y) * rate;
+                panel->animated_rectangle_percentage.max.x += (target_percentage.max.x - panel->animated_rectangle_percentage.max.x) * rate;
+                panel->animated_rectangle_percentage.max.y += (target_percentage.max.y - panel->animated_rectangle_percentage.max.y) * rate;
+                request_frame();
+            } else {
+                panel->animated_rectangle_percentage = target_percentage;
+            }
+        }
+
         // NOTE(simon): Build leaf panel UI.
         prof_zone_begin(prof_build_leaf_ui, "leaf ui");
         for (Panel *panel = window->root_panel; !is_nil_panel(panel); panel = panel_iterator_depth_first_pre_order(panel, window->root_panel).next) {
@@ -1154,8 +1390,45 @@ internal Void update(Void) {
                 continue;
             }
 
-            R2F32 panel_rectangle = r2f32_pad(rectangle_from_panel(panel, client_rectangle), -panel_pad);
+            push_context(.panel = handle_from_panel(panel), .tab = panel->active_tab);
+            ui_focus_push(panel == panel_from_handle(window->active_panel) ? UI_Focus_None : UI_Focus_Inactive);
+
+            R2F32 panel_rectangle = r2f32_pad(
+                r2f32(
+                    panel->animated_rectangle_percentage.min.x * content_size.width,
+                    panel->animated_rectangle_percentage.min.y * content_size.height,
+                    panel->animated_rectangle_percentage.max.x * content_size.width,
+                    panel->animated_rectangle_percentage.max.y * content_size.height
+                ),
+                -panel_pad
+            );
             Handle next_active_tab = panel->active_tab;
+
+            // NOTE(simon): Focus panel if the user clicks inside of it.
+            for (UI_Event *event = 0; ui_next_event(&event);) {
+                if (
+                    event->kind == UI_EventKind_KeyPress && (
+                        event->key == Gfx_Key_MouseLeft ||
+                        event->key == Gfx_Key_MouseMiddle ||
+                        event->key == Gfx_Key_MouseRight
+                    ) &&
+                    r2f32_contains_v2f32(panel_rectangle, event->position)
+                ) {
+                    push_command(CommandKind_FocusPanel);
+                    break;
+                }
+            }
+
+            // NOTE(simon): Inactive panel overlay.
+            if (panel != panel_from_handle(window->active_panel)) {
+                UI_Palette overlay = ui_palette_top();
+                overlay.background = color_from_theme(ThemeColor_InactivePanelOverlay);
+                ui_palette_next(overlay);
+                ui_fixed_position_next(panel_rectangle.min);
+                ui_width_next(ui_size_pixels(r2f32_size(panel_rectangle).width, 1.0f));
+                ui_height_next(ui_size_pixels(r2f32_size(panel_rectangle).height, 1.0f));
+                ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_FloatingPosition);
+            }
 
             F32   tab_height              = ui_size_ems(2.0f, 1.0f).value;
             R2F32 tab_bar_rectangle       = r2f32(panel_rectangle.min.x, panel_rectangle.min.y, panel_rectangle.max.x, panel_rectangle.min.y + tab_height);
@@ -1237,6 +1510,8 @@ internal Void update(Void) {
             }
 
             panel->active_tab = next_active_tab;
+            ui_focus_pop();
+            pop_context();
         }
         prof_zone_end(prof_build_leaf_ui);
 
@@ -1451,6 +1726,8 @@ internal Void update(Void) {
                 box = iterator.next;
             }
         }
+
+        pop_context();
     }
 
 

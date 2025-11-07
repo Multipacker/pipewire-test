@@ -25,7 +25,8 @@
 internal S32 os_run(Str8List arguments) {
     Arena *arena = arena_create();
     state = arena_push_struct(arena, State);
-    state->arena    = arena;
+    state->arena = arena;
+    state->command_arena = arena_create();
 
     for (U64 i = 0; i < array_count(state->frame_arenas); ++i) {
         state->frame_arenas[i] = arena_create();
@@ -102,9 +103,11 @@ internal S32 os_run(Str8List arguments) {
     Tab *tab0 = create_tab(str8_literal("Tab 0"));
     Tab *tab1 = create_tab(str8_literal("Tab 1"));
     Tab *tab2 = create_tab(str8_literal("Tab 2"));
+    Tab *tab3 = create_tab(str8_literal("Tab 3"));
     insert_tab(left,  &nil_tab, tab0);
     insert_tab(left,  tab0, tab1);
-    insert_tab(right, &nil_tab, tab2);
+    insert_tab(left,  tab1, tab2);
+    insert_tab(right, &nil_tab, tab3);
 
     font_cache_create();
     gfx_set_update_function(update);
