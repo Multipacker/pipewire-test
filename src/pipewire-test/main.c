@@ -27,6 +27,7 @@ internal S32 os_run(Str8List arguments) {
     state = arena_push_struct(arena, State);
     state->arena = arena;
     state->command_arena = arena_create();
+    state->drag_arena = arena_create();
 
     for (U64 i = 0; i < array_count(state->frame_arenas); ++i) {
         state->frame_arenas[i] = arena_create();
@@ -93,21 +94,27 @@ internal S32 os_run(Str8List arguments) {
     render_init();
 
     Window *window = create_window(str8_literal("Pipewire-test"), 1280, 720);
-    Panel *left  = create_panel();
-    Panel *right = create_panel();
-    left->percentage_of_parent  = 0.5f;
-    right->percentage_of_parent = 0.5f;
+    Panel *left   = create_panel();
+    Panel *middle = create_panel();
+    Panel *right  = create_panel();
+    left->percentage_of_parent   = 0.2f;
+    middle->percentage_of_parent = 0.6f;
+    right->percentage_of_parent  = 0.2f;
     insert_panel(window->root_panel, &nil_panel, left);
-    insert_panel(window->root_panel, left, right);
+    insert_panel(window->root_panel, left, middle);
+    insert_panel(window->root_panel, middle, right);
 
-    Tab *tab0 = create_tab(str8_literal("Tab 0"));
-    Tab *tab1 = create_tab(str8_literal("Tab 1"));
-    Tab *tab2 = create_tab(str8_literal("Tab 2"));
-    Tab *tab3 = create_tab(str8_literal("Tab 3"));
-    insert_tab(left,  &nil_tab, tab0);
-    insert_tab(left,  tab0, tab1);
-    insert_tab(left,  tab1, tab2);
-    insert_tab(right, &nil_tab, tab3);
+    Tab *tab0 = create_tab(str8_literal("Object list"));
+    Tab *tab1 = create_tab(str8_literal("Graph"));
+    Tab *tab2 = create_tab(str8_literal("Properties"));
+    tab0->build = build_list_tab;
+    tab1->build = build_graph_tab;
+    tab2->build = build_property_tab;
+    insert_tab(left,   &nil_tab, tab0);
+    insert_tab(middle, &nil_tab, tab1);
+    insert_tab(right,  &nil_tab, tab2);
+
+    window->active_panel = handle_from_panel(middle);
 
     font_cache_create();
     gfx_set_update_function(update);

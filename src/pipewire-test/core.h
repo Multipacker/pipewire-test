@@ -119,6 +119,10 @@ struct Handle {
     U64 u64[2];
 };
 
+#define BUILD_TAB_FUNCTION(name) Void name(R2F32 tab_rectangle)
+typedef BUILD_TAB_FUNCTION(BuildTabFunction);
+internal BUILD_TAB_FUNCTION(build_nil_tab);
+
 typedef struct Tab Tab;
 struct Tab {
     Tab *next;
@@ -128,11 +132,15 @@ struct Tab {
 
     Arena *arena;
     Str8   name;
+    Void  *state;
+    BuildTabFunction *build;
 };
 
 global Tab nil_tab = {
     .next     = &nil_tab,
     .previous = &nil_tab,
+
+    .build = build_nil_tab,
 };
 
 typedef struct Panel Panel;
@@ -225,13 +233,17 @@ struct Context {
 };
 
 #define COMMANDS(X)                                                         \
-    X(NextTab,         "Next Tab",          "Switch to the next tab")       \
-    X(PreviousTab,     "Previous Tab",      "Switch to the previous tab")   \
+    X(CloseTab,        "Close tab",         "Close the current tab")        \
+    X(MoveTab,         "Move tab",          "")                             \
+    X(NextTab,         "Next tab",          "Switch to the next tab")       \
+    X(PreviousTab,     "Previous tab",      "Switch to the previous tab")   \
     X(FocusPanelLeft,  "Focus panel left",  "Focus the panel above")        \
     X(FocusPanelUp,    "Focus panel up",    "Focus the panel on the left")  \
     X(FocusPanelRight, "Focus panel right", "Focus the panel on the right") \
     X(FocusPanelDown,  "Focus panel down",  "Focus the panel below")        \
-    X(FocusPanel,      "Focus panel",       "")
+    X(FocusPanel,      "Focus panel",       "")                             \
+    X(ClosePanel,      "Close panel",       "Close the current panel")      \
+    X(SplitPanel,      "Split panel",       "")
 
 typedef enum {
     CommandKind_Null,
@@ -247,6 +259,12 @@ struct Command {
     CommandKind kind;
     Context    *context;
 };
+
+typedef enum {
+    DragState_None,
+    DragState_Dragging,
+    DragState_Dropping,
+} DragState;
 
 typedef struct State State;
 struct State {
@@ -264,7 +282,7 @@ struct State {
     Panel  *panel_freelist;
     Window *window_freelist;
 
-    // NOTE(simon): Commands
+    // NOTE(simon): Commands.
     Arena   *command_arena;
     Command *first_command;
     Command *last_command;
@@ -276,9 +294,14 @@ struct State {
     Context  base_context;
     Context *context_stack;
 
+    // NOTE(simon): Drag-and-drop.
+    DragState     drag_state;
+    Arena        *drag_arena;
+    Context      *drag_context;
+    ContextMember drag_context_member;
+
     F32 font_size;
 
-    V2F32      graph_offset;
     GraphNode *first_node;
     GraphNode *last_node;
     GraphNode *node_freelist;
@@ -327,6 +350,8 @@ internal Tab  *tab_from_handle(Handle handle);
 internal B32   is_nil_tab(Tab *tab);
 internal Tab  *create_tab(Str8 title);
 internal Void  destroy_tab(Tab *tab);
+#define tab_state_from_type(type) ((type *) tab_state_from_size_alignment(sizeof(type), _Alignof(type)))
+internal Void *tab_state_from_size_alignment(U64 size, U64 alignment);
 
 // NOTE(simon): Panels.
 
@@ -349,5 +374,17 @@ internal Window *window_from_gfx_handle(Gfx_Window handle);
 internal B32     is_nil_window(Window *window);
 internal Window *create_window(Str8 title, U32 width, U32 height);
 internal Void    destroy_window(Window *window);
+
+// NOTE(simon): Drag-and-drop.
+internal Void drag_begin(ContextMember context_member);
+internal B32  drag_is_active(Void);
+internal Void drag_cancel(Void);
+internal B32  drag_drop(Void);
+
+// NOTE(simon): Views
+
+internal BUILD_TAB_FUNCTION(build_list_tab);
+internal BUILD_TAB_FUNCTION(build_property_tab);
+internal BUILD_TAB_FUNCTION(build_graph_tab);
 
 #endif //CORE_H

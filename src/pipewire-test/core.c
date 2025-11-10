@@ -105,15 +105,33 @@ internal Tab *create_tab(Str8 name) {
 
     tab->arena = arena_create();
     tab->name  = str8_copy(tab->arena, name);
+    tab->build = build_nil_tab;
 
     return tab;
 }
 
 internal Void destroy_tab(Tab *tab) {
     if (!is_nil_tab(tab)) {
+        arena_destroy(tab->arena);
+
         ++tab->generation;
         sll_stack_push(state->tab_freelist, tab);
     }
+}
+
+internal Void *tab_state_from_size_alignment(U64 size, U64 alignment) {
+    Tab *tab = tab_from_handle(top_context()->tab);
+
+    Void *tab_state = tab->state;
+    if (!tab_state) {
+        if (!is_nil_tab(tab)) {
+            tab_state = tab->state = arena_push(tab->arena, size, alignment);
+        } else {
+            tab_state = arena_push(frame_arena(), size, alignment);
+        }
+    }
+
+    return tab_state;
 }
 
 
@@ -374,6 +392,37 @@ internal Void destroy_window(Window *window) {
 
 
 
+// NOTE(simon): Drag-and-drop.
+
+internal Void drag_begin(ContextMember context_member) {
+    if (!drag_is_active()) {
+        arena_reset(state->drag_arena);
+        state->drag_state = DragState_Dragging;
+        state->drag_context = copy_context(state->drag_arena, top_context());
+        state->drag_context_member = context_member;
+    }
+}
+
+internal B32 drag_is_active(Void) {
+    B32 result = state->drag_state == DragState_Dragging || state->drag_state == DragState_Dropping;
+    return result;
+}
+
+internal Void drag_cancel(Void) {
+    state->drag_state = DragState_None;
+}
+
+internal B32 drag_drop(Void) {
+    B32 result = false;
+    if (state->drag_state == DragState_Dropping) {
+        result = true;
+        state->drag_state = DragState_None;
+    }
+    return result;
+}
+
+
+
 internal Str8 kind_from_object(Pipewire_Object *object) {
     Str8 result = { 0 };
 
@@ -503,8 +552,17 @@ internal UI_Input object_button(Pipewire_Object *object) {
     return input;
 }
 
-internal Void build_view(R2F32 client_rectangle) {
-    V2F32 client_size = r2f32_size(client_rectangle);
+internal BUILD_TAB_FUNCTION(build_nil_tab) {
+}
+
+internal BUILD_TAB_FUNCTION(build_list_tab) {
+    typedef struct TabState TabState;
+    struct TabState {
+        UI_ScrollPosition all_objects_scroll_position;
+    };
+
+    TabState *tab_state = tab_state_from_type(TabState);
+
     // NOTE(simon): Collect pipewire objects.
     S64 object_count = { 0 };
     Pipewire_Object **objects = 0;
@@ -521,470 +579,489 @@ internal Void build_view(R2F32 client_rectangle) {
         }
     }
 
-    F32 row_height = 2.0f * (F32) ui_font_size_top();
+    V2F32 tab_size   = r2f32_size(tab_rectangle);
+    F32   row_height = 2.0f * (F32) ui_font_size_top();
 
-    // NOTE(simon): Build panel for selected object.
+    // NOTE(simon): Build list of all objects.
+    R1S64 visible_range = { 0 };
+    ui_palette(palette_from_theme(ThemePalette_Button))
+    ui_scroll_region(tab_size, row_height, object_count, &visible_range, 0, &tab_state->all_objects_scroll_position) {
+        ui_text_x_padding(5.0f)
+        ui_width(ui_size_fill())
+        ui_height(ui_size_pixels(row_height, 1.0f))
+        for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+            Pipewire_Object *object = objects[i];
+            object_button(object);
+        }
+    }
+}
+
+internal BUILD_TAB_FUNCTION(build_property_tab) {
+    typedef struct TabState TabState;
+    struct TabState {
+        UI_ScrollPosition selected_object_scroll_position;
+    };
+
+    TabState *tab_state = tab_state_from_type(TabState);
+
+    Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
+
+    // NOTE(simon): Collect all properties.
+    S64 property_count = 0;
+    Pipewire_Property **properties = 0;
     {
-        Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
-
-        // NOTE(simon): Collect all properties.
-        S64 property_count = 0;
-        Pipewire_Property **properties = 0;
-        {
-            for (Pipewire_Property *property = selected_object->first_property; property; property = property->next) {
-                ++property_count;
-            }
-            properties = arena_push_array(frame_arena(), Pipewire_Property *, (U64) property_count);
-            for (Pipewire_Property *property = selected_object->first_property, **propertie_ptr = properties; property; property = property->next) {
-                *propertie_ptr++ = property;
-            }
+        for (Pipewire_Property *property = selected_object->first_property; property; property = property->next) {
+            ++property_count;
         }
-
-        UI_Key panel_key    = ui_key_from_string(ui_active_seed_key(), str8_literal("object_panel"));
-        V2F32  panel_size   = v2f32(40.0f * (F32) ui_font_size_top(), client_size.height - 2.0f * row_height);
-        F32    panel_offset = ui_animate(panel_key, !pipewire_object_is_nil(selected_object) * panel_size.width, .initial = 0);
-
-        ui_width_next(ui_size_pixels(panel_size.width, 1.0f));
-        ui_height_next(ui_size_pixels(panel_size.height, 1.0f));
-        ui_fixed_x_next(client_rectangle.max.x - panel_offset);
-        ui_fixed_y_next((client_rectangle.max.y - panel_size.y) * 0.5f);
-        ui_layout_axis_next(Axis2_Y);
-        UI_Box *panel = ui_create_box_from_key(
-            UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clip |
-            UI_BoxFlag_Scrollable | UI_BoxFlag_Clickable,
-            panel_key
-        );
-
-        ui_parent(panel)
-        ui_text_x_padding(5.0f) {
-            ui_height(ui_size_pixels(row_height, 1.0f))
-            ui_row()
-            ui_width(ui_size_text_content(0, 1.0f)) {
-                ui_font_next(ui_icon_font());
-                ui_text_x_padding_next(0.0f);
-                ui_text_align_next(UI_TextAlign_Center);
-                ui_width_next(ui_size_ems(1.5f, 1.0f));
-                UI_Input close_input = ui_button_format("%.*s###close_panel", str8_expand(ui_icon_string_from_kind(UI_IconKind_Close)));
-                if (close_input.flags & UI_InputFlag_Clicked) {
-                    state->selected_object_next = pipewire_handle_from_object(0);
-                }
-                ui_label(kind_from_object(selected_object));
-                ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
-                ui_label(name_from_object(selected_object));
-            }
-
-            if (selected_object->kind == Pipewire_Object_Module) {
-                ui_width(ui_size_parent_percent(1.0f, 1.0f))
-                ui_height(ui_size_pixels(row_height, 1.0f)) {
-                    Str8 name        = pipewire_object_property_string_from_name(selected_object, str8_literal("module.name"));
-                    Str8 author      = pipewire_object_property_string_from_name(selected_object, str8_literal("module.author"));
-                    Str8 description = pipewire_object_property_string_from_name(selected_object, str8_literal("module.description"));
-                    Str8 usage       = pipewire_object_property_string_from_name(selected_object, str8_literal("module.usage"));
-                    Str8 version     = pipewire_object_property_string_from_name(selected_object, str8_literal("module.version"));
-
-                    ui_label_format("%.*s v%.*s", str8_expand(name), str8_expand(version));
-
-                    if (author.size) {
-                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                        ui_label(str8_literal("Author"));
-                        ui_label(author);
-                    }
-
-                    if (description.size) {
-                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                        ui_label(str8_literal("Description"));
-                        ui_label(description);
-                    }
-
-                    if (usage.size) {
-                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                        ui_label(str8_literal("Usage"));
-                        ui_font_next(font_cache_font_from_static_data(&mono_font));
-                        ui_label(usage);
-                    }
-                }
-            } else if (selected_object->kind == Pipewire_Object_Factory) {
-                ui_width(ui_size_parent_percent(1.0f, 1.0f))
-                ui_height(ui_size_pixels(row_height, 1.0f)) {
-                    Str8 name         = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.name"));
-                    Str8 type_name    = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.name"));
-                    Str8 type_version = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.version"));
-                    Str8 usage        = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.usage"));
-                    U32  module_id    = pipewire_object_property_u32_from_name(selected_object, str8_literal("module.id"));
-
-                    ui_label(name);
-
-                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                    ui_label(str8_literal("Creates"));
-                    ui_label_format("%.*s v%.*s", str8_expand(type_name), str8_expand(type_version));
-
-                    Pipewire_Object *module = pipewire_object_from_id(module_id);
-                    if (!pipewire_object_is_nil(module)) {
-                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                        ui_row()
-                        ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                            ui_label(str8_literal("Module"));
-                            ui_palette_next(palette_from_theme(ThemePalette_Button));
-                            object_button(module);
-                        }
-                    }
-
-                    if (usage.size) {
-                        ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                        ui_label(str8_literal("Usage"));
-                        ui_font_next(font_cache_font_from_static_data(&mono_font));
-                        ui_label(usage);
-                    }
-                }
-            } else if (selected_object->kind == Pipewire_Object_Link) {
-                ui_width(ui_size_parent_percent(1.0f, 1.0f))
-                ui_height(ui_size_pixels(row_height, 1.0f)) {
-                    U32 output_node_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.node"));
-                    U32 output_port_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.port"));
-                    U32 input_node_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.node"));
-                    U32 input_port_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.port"));
-                    U32 factory_id     = pipewire_object_property_u32_from_name(selected_object, str8_literal("factory.id"));
-                    U32 client_id      = pipewire_object_property_u32_from_name(selected_object, str8_literal("client.id"));
-
-                    Pipewire_Object *output_node = pipewire_object_from_id(output_node_id);
-                    Pipewire_Object *output_port = pipewire_object_from_id(output_port_id);
-                    Pipewire_Object *input_node  = pipewire_object_from_id(input_node_id);
-                    Pipewire_Object *input_port  = pipewire_object_from_id(input_port_id);
-                    Pipewire_Object *factory     = pipewire_object_from_id(factory_id);
-                    Pipewire_Object *client      = pipewire_object_from_id(client_id);
-
-                    ui_label(str8_literal("Ownership"));
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Client"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(client);
-                    }
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Factory"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(factory);
-                    }
-
-                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                    ui_label(str8_literal("Output"));
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Node"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(output_node);
-                    }
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Port"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(output_port);
-                    }
-
-                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
-                    ui_label(str8_literal("Input"));
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Node"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(input_node);
-                    }
-                    ui_row()
-                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                        ui_label(str8_literal("Port"));
-                        ui_palette_next(palette_from_theme(ThemePalette_Button));
-                        object_button(input_port);
-                    }
-                }
-            } else {
-                R1S64 visible_range = { 0 };
-                local UI_ScrollPosition scroll_position = { 0 };
-                ui_palette(palette_from_theme(ThemePalette_Button))
-                ui_scroll_region(v2f32(panel_size.x, panel_size.y - row_height), row_height, property_count, &visible_range, 0, &scroll_position) {
-                    for (S64 i = visible_range.min; i < visible_range.max; ++i) {
-                        Pipewire_Property *property = properties[i];
-
-                        // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
-                        Pipewire_Object *reference = &pipewire_nil_object;
-                        Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
-                        if (
-                            str8_equal(last_component, str8_literal("id")) ||
-                            str8_equal(last_component, str8_literal("client")) ||
-                            str8_equal(last_component, str8_literal("device")) ||
-                            str8_equal(last_component, str8_literal("node")) ||
-                            str8_equal(last_component, str8_literal("port"))
-                        ) {
-                            U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
-                            reference = pipewire_object_from_id(id);
-                        }
-
-                        ui_width(ui_size_parent_percent(1.0f, 1.0f))
-                        ui_row()
-                        ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
-                            ui_label(property->name);
-
-                            // NOTE(simon): Create a button if we are a reference.
-                            if (!pipewire_object_is_nil(reference)) {
-                                ui_palette_next(palette_from_theme(ThemePalette_Button));
-                                object_button(reference);
-                            } else {
-                                ui_label(property->value);
-                            }
-                        }
-                    }
-                }
-            }
+        properties = arena_push_array(frame_arena(), Pipewire_Property *, (U64) property_count);
+        for (Pipewire_Property *property = selected_object->first_property, **propertie_ptr = properties; property; property = property->next) {
+            *propertie_ptr++ = property;
         }
-        ui_input_from_box(panel);
     }
 
-    ui_text_x_padding(5.0f)
-    ui_width(ui_size_fill())
-    ui_height(ui_size_fill())
-    ui_row() {
-        // NOTE(simon): Draw list of all objects.
-        V2F32 list_size = v2f32(25.0f * (F32) ui_font_size_top(), client_size.height);
-        local UI_ScrollPosition scroll_position = { 0 };
-        R1S64 visible_range = { 0 };
-        ui_palette(palette_from_theme(ThemePalette_Button))
-        ui_scroll_region(list_size, row_height, object_count, &visible_range, 0, &scroll_position) {
-            ui_width(ui_size_fill())
-            ui_height(ui_size_pixels(row_height, 1.0f))
-            for (S64 i = visible_range.min; i < visible_range.max; ++i) {
-                Pipewire_Object *object = objects[i];
-                object_button(object);
+    V2F32 tab_size   = r2f32_size(tab_rectangle);
+    F32   row_height = 2.0f * (F32) ui_font_size_top();
+
+    ui_width(ui_size_pixels(tab_size.width, 1.0f))
+    ui_height(ui_size_pixels(tab_size.height, 1.0f))
+    ui_column()
+    ui_text_x_padding(5.0f) {
+        ui_height(ui_size_pixels(row_height, 1.0f))
+        ui_row()
+        ui_width(ui_size_text_content(0, 1.0f)) {
+            ui_font_next(ui_icon_font());
+            ui_text_x_padding_next(0.0f);
+            ui_text_align_next(UI_TextAlign_Center);
+            ui_width_next(ui_size_ems(1.5f, 1.0f));
+            UI_Input close_input = ui_button_format("%.*s###close_panel", str8_expand(ui_icon_string_from_kind(UI_IconKind_Close)));
+            if (close_input.flags & UI_InputFlag_Clicked) {
+                state->selected_object_next = pipewire_handle_from_object(0);
             }
+            ui_label(kind_from_object(selected_object));
+            ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
+            ui_label(name_from_object(selected_object));
         }
 
-        // NOTE(simon): Build graph.
-        ui_width(ui_size_pixels(client_size.width - list_size.width, 1.0f));
-        ui_height(ui_size_pixels(client_size.height, 1.0f));
-        UI_Box *node_graph_box = ui_create_box_from_string(UI_BoxFlag_Clip | UI_BoxFlag_Clickable | UI_BoxFlag_Scrollable, str8_literal("###node_graph"));
-        ui_parent(node_graph_box) {
-            V2F32 no_ports_offset     = v2f32(0.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
-            V2F32 only_output_offset  = v2f32(1.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
-            V2F32 input_output_offset = v2f32(2.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
-            V2F32 only_inputs_offset  = v2f32(3.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+        if (selected_object->kind == Pipewire_Object_Module) {
+            ui_width(ui_size_parent_percent(1.0f, 1.0f))
+            ui_height(ui_size_pixels(row_height, 1.0f)) {
+                Str8 name        = pipewire_object_property_string_from_name(selected_object, str8_literal("module.name"));
+                Str8 author      = pipewire_object_property_string_from_name(selected_object, str8_literal("module.author"));
+                Str8 description = pipewire_object_property_string_from_name(selected_object, str8_literal("module.description"));
+                Str8 usage       = pipewire_object_property_string_from_name(selected_object, str8_literal("module.usage"));
+                Str8 version     = pipewire_object_property_string_from_name(selected_object, str8_literal("module.version"));
 
-            typedef struct PortNode PortNode;
-            struct PortNode {
-                PortNode        *next;
-                PortNode        *previous;
-                UI_Box          *box;
-                Pipewire_Object *port;
-            };
-            PortNode *first_port = 0;
-            PortNode *last_port  = 0;
+                ui_label_format("%.*s v%.*s", str8_expand(name), str8_expand(version));
 
-            for (S64 i = 0; i < object_count; ++i) {
-                Pipewire_Object *node = objects[i];
-                if (node->kind != Pipewire_Object_Node) {
-                    continue;
+                if (author.size) {
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Author"));
+                    ui_label(author);
                 }
 
-                // NOTE(simon): Count number of input and output ports and
-                // determine the maximum width of input and output names.
-                U32 input_port_count  = 0;
-                U32 output_port_count = 0;
-                F32 input_port_name_max_width  = 0.0f;
-                F32 output_port_name_max_width = 0.0f;
+                if (description.size) {
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Description"));
+                    ui_label(description);
+                }
+
+                if (usage.size) {
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Usage"));
+                    ui_font_next(font_cache_font_from_static_data(&mono_font));
+                    ui_label(usage);
+                }
+            }
+        } else if (selected_object->kind == Pipewire_Object_Factory) {
+            ui_width(ui_size_parent_percent(1.0f, 1.0f))
+            ui_height(ui_size_pixels(row_height, 1.0f)) {
+                Str8 name         = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.name"));
+                Str8 type_name    = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.name"));
+                Str8 type_version = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.type.version"));
+                Str8 usage        = pipewire_object_property_string_from_name(selected_object, str8_literal("factory.usage"));
+                U32  module_id    = pipewire_object_property_u32_from_name(selected_object, str8_literal("module.id"));
+
+                ui_label(name);
+
+                ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                ui_label(str8_literal("Creates"));
+                ui_label_format("%.*s v%.*s", str8_expand(type_name), str8_expand(type_version));
+
+                Pipewire_Object *module = pipewire_object_from_id(module_id);
+                if (!pipewire_object_is_nil(module)) {
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(str8_literal("Module"));
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(module);
+                    }
+                }
+
+                if (usage.size) {
+                    ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                    ui_label(str8_literal("Usage"));
+                    ui_font_next(font_cache_font_from_static_data(&mono_font));
+                    ui_label(usage);
+                }
+            }
+        } else if (selected_object->kind == Pipewire_Object_Link) {
+            ui_width(ui_size_parent_percent(1.0f, 1.0f))
+            ui_height(ui_size_pixels(row_height, 1.0f)) {
+                U32 output_node_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.node"));
+                U32 output_port_id = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.output.port"));
+                U32 input_node_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.node"));
+                U32 input_port_id  = pipewire_object_property_u32_from_name(selected_object, str8_literal("link.input.port"));
+                U32 factory_id     = pipewire_object_property_u32_from_name(selected_object, str8_literal("factory.id"));
+                U32 client_id      = pipewire_object_property_u32_from_name(selected_object, str8_literal("client.id"));
+
+                Pipewire_Object *output_node = pipewire_object_from_id(output_node_id);
+                Pipewire_Object *output_port = pipewire_object_from_id(output_port_id);
+                Pipewire_Object *input_node  = pipewire_object_from_id(input_node_id);
+                Pipewire_Object *input_port  = pipewire_object_from_id(input_port_id);
+                Pipewire_Object *factory     = pipewire_object_from_id(factory_id);
+                Pipewire_Object *client      = pipewire_object_from_id(client_id);
+
+                ui_label(str8_literal("Ownership"));
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Client"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(client);
+                }
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Factory"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(factory);
+                }
+
+                ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                ui_label(str8_literal("Output"));
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Node"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(output_node);
+                }
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Port"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(output_port);
+                }
+
+                ui_spacer_sized(ui_size_ems(1.0f, 1.0f));
+                ui_label(str8_literal("Input"));
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Node"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(input_node);
+                }
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    ui_label(str8_literal("Port"));
+                    ui_palette_next(palette_from_theme(ThemePalette_Button));
+                    object_button(input_port);
+                }
+            }
+        } else {
+            R1S64 visible_range = { 0 };
+            ui_palette(palette_from_theme(ThemePalette_Button))
+            ui_scroll_region(v2f32(tab_size.x, tab_size.y - row_height), row_height, property_count, &visible_range, 0, &tab_state->selected_object_scroll_position) {
+                for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+                    Pipewire_Property *property = properties[i];
+
+                    // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
+                    Pipewire_Object *reference = &pipewire_nil_object;
+                    Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
+                    if (
+                        str8_equal(last_component, str8_literal("id")) ||
+                        str8_equal(last_component, str8_literal("client")) ||
+                        str8_equal(last_component, str8_literal("device")) ||
+                        str8_equal(last_component, str8_literal("node")) ||
+                        str8_equal(last_component, str8_literal("port"))
+                    ) {
+                        U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
+                        reference = pipewire_object_from_id(id);
+                    }
+
+                    ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                    ui_row()
+                    ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                        ui_label(property->name);
+
+                        // NOTE(simon): Create a button if we are a reference.
+                        if (!pipewire_object_is_nil(reference)) {
+                            ui_palette_next(palette_from_theme(ThemePalette_Button));
+                            object_button(reference);
+                        } else {
+                            ui_label(property->value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal BUILD_TAB_FUNCTION(build_graph_tab) {
+    typedef struct TabState TabState;
+    struct TabState {
+        V2F32 graph_offset;
+    };
+
+    TabState *tab_state = tab_state_from_type(TabState);
+
+    // NOTE(simon): Collect pipewire objects.
+    S64 object_count = { 0 };
+    Pipewire_Object **objects = 0;
+    {
+        for (Pipewire_Object *object = pipewire_state->first_object; object; object = object->all_next) {
+            ++object_count;
+        }
+
+        objects = arena_push_array_no_zero(frame_arena(), Pipewire_Object *, (U64) object_count);
+        Pipewire_Object **object_ptr = objects;
+        for (Pipewire_Object *object = pipewire_state->first_object; object; object = object->all_next) {
+            *object_ptr = object;
+            ++object_ptr;
+        }
+    }
+
+    V2F32 tab_size   = r2f32_size(tab_rectangle);
+    F32   row_height = 2.0f * (F32) ui_font_size_top();
+
+    // NOTE(simon): Build graph.
+    ui_width_next(ui_size_pixels(tab_size.width, 1.0f));
+    ui_height_next(ui_size_pixels(tab_size.height, 1.0f));
+    UI_Box *node_graph_box = ui_create_box_from_string(UI_BoxFlag_Clip | UI_BoxFlag_Clickable | UI_BoxFlag_Scrollable, str8_literal("###node_graph"));
+    ui_text_x_padding(5.0f)
+    ui_parent(node_graph_box) {
+        V2F32 no_ports_offset     = v2f32(0.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+        V2F32 only_output_offset  = v2f32(1.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+        V2F32 input_output_offset = v2f32(2.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+        V2F32 only_inputs_offset  = v2f32(3.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
+
+        typedef struct PortNode PortNode;
+        struct PortNode {
+            PortNode        *next;
+            PortNode        *previous;
+            UI_Box          *box;
+            Pipewire_Object *port;
+        };
+        PortNode *first_port = 0;
+        PortNode *last_port  = 0;
+
+        for (S64 i = 0; i < object_count; ++i) {
+            Pipewire_Object *node = objects[i];
+            if (node->kind != Pipewire_Object_Node) {
+                continue;
+            }
+
+            // NOTE(simon): Count number of input and output ports and
+            // determine the maximum width of input and output names.
+            U32 input_port_count  = 0;
+            U32 output_port_count = 0;
+            F32 input_port_name_max_width  = 0.0f;
+            F32 output_port_name_max_width = 0.0f;
+            for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
+                Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
+                Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
+                F32 port_name_width = font_cache_size_from_font_text_size(ui_font_top(), port_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
+                if (str8_equal(direction, str8_literal("in"))) {
+                    ++input_port_count;
+                    input_port_name_max_width = f32_max(input_port_name_max_width, port_name_width);
+                } else if (str8_equal(direction, str8_literal("out"))) {
+                    ++output_port_count;
+                    output_port_name_max_width = f32_max(output_port_name_max_width, port_name_width);
+                }
+            }
+
+            Str8 node_name = name_from_object(node);
+            F32 node_name_width = font_cache_size_from_font_text_size(ui_font_top(), node_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
+
+            // NOTE(simon): Calculate node size.
+            F32 node_width = f32_max(input_port_name_max_width + output_port_name_max_width, node_name_width);
+            F32 node_height = row_height * (F32) (1 + u32_max(input_port_count, output_port_count));
+
+            // NOTE(simon): Grab y offset depending on which ports are
+            // available and increment for next one.
+            V2F32 default_position = { 0 };
+            if (input_port_count == 0 && output_port_count == 0) {
+                default_position = no_ports_offset;
+                no_ports_offset.y += node_height + row_height;
+            } else if (input_port_count == 0 && output_port_count != 0) {
+                default_position = only_output_offset;
+                only_output_offset.y += node_height + row_height;
+            } else if (input_port_count != 0 && output_port_count == 0) {
+                default_position = only_inputs_offset;
+                only_inputs_offset.y += node_height + row_height;
+            } else if (input_port_count != 0 && output_port_count != 0) {
+                default_position = input_output_offset;
+                input_output_offset.y += node_height + row_height;
+            }
+
+            // NOTE(simon): Grab cached node state or create a new one with
+            // default values.
+            GraphNode *graph_node = 0;
+            for (GraphNode *candidate = state->first_node; candidate; candidate = candidate->next) {
+                if (pipewire_object_from_handle(candidate->handle) == node) {
+                    graph_node = candidate;
+                    break;
+                }
+            }
+            if (!graph_node) {
+                graph_node = state->node_freelist;
+                if (graph_node) {
+                    sll_stack_pop(state->node_freelist);
+                    memory_zero_struct(graph_node);
+                } else {
+                    graph_node = arena_push_struct(state->arena, GraphNode);
+                }
+                graph_node->handle = pipewire_handle_from_object(node);
+                graph_node->position = default_position;
+                dll_push_back(state->first_node, state->last_node, graph_node);
+            }
+            graph_node->last_frame_used = state->frame_index;
+
+            if (pipewire_object_from_handle(state->hovered_object) == node) {
+                UI_Palette palette = ui_palette_top();
+                palette.background = color_from_theme(ThemeColor_Focus);
+                ui_palette_next(palette);
+            }
+
+            // NOTE(simon): Build node.
+            ui_corner_radius_next(5.0f);
+            ui_fixed_position_next(v2f32_subtract(graph_node->position, tab_state->graph_offset));
+            ui_width_next(ui_size_pixels(node_width, 1.0f));
+            ui_height_next(ui_size_pixels(node_height, 1.0f));
+            ui_layout_axis_next(Axis2_Y);
+            UI_Box *node_box = ui_create_box_from_string_format(UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clickable, "###node_%u", node->id);
+            ui_parent(node_box)
+            ui_width(ui_size_fill())
+            ui_height(ui_size_pixels(row_height, 1.0f)) {
+                ui_text_align_next(UI_TextAlign_Center);
+                ui_label(name_from_object(node));
+
+                // NOTE(simon): Build port columns.
+                UI_Box *input_column  = &global_ui_null_box;
+                UI_Box *output_column = &global_ui_null_box;
+                ui_height(ui_size_fill())
+                ui_row()
+                ui_layout_axis(Axis2_Y) {
+                    ui_width_next(ui_size_pixels(input_port_name_max_width, 1.0f));
+                    input_column = ui_create_box(0);
+                    ui_spacer_sized(ui_size_fill());
+                    ui_width_next(ui_size_pixels(output_port_name_max_width, 1.0f));
+                    output_column = ui_create_box(0);
+                }
+
+                // NOTE(simon): Build ports.
                 for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
+                    PortNode *port_node = arena_push_struct(frame_arena(), PortNode);
+                    port_node->port = child;
+
                     Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
                     Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
-                    F32 port_name_width = font_cache_size_from_font_text_size(ui_font_top(), port_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
+
+                    UI_Input input = { 0 };
                     if (str8_equal(direction, str8_literal("in"))) {
-                        ++input_port_count;
-                        input_port_name_max_width = f32_max(input_port_name_max_width, port_name_width);
+                        ui_parent_next(input_column);
+                        ui_text_align_next(UI_TextAlign_Left);
+                        input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
                     } else if (str8_equal(direction, str8_literal("out"))) {
-                        ++output_port_count;
-                        output_port_name_max_width = f32_max(output_port_name_max_width, port_name_width);
-                    }
-                }
-
-                Str8 node_name = name_from_object(node);
-                F32 node_name_width = font_cache_size_from_font_text_size(ui_font_top(), node_name, ui_font_size_top()).width + 2.0f * ui_text_x_padding_top();
-
-                // NOTE(simon): Calculate node size.
-                F32 node_width = f32_max(input_port_name_max_width + output_port_name_max_width, node_name_width);
-                F32 node_height = row_height * (F32) (1 + u32_max(input_port_count, output_port_count));
-
-                // NOTE(simon): Grab y offset depending on which ports are
-                // available and increment for next one.
-                V2F32 default_position = { 0 };
-                if (input_port_count == 0 && output_port_count == 0) {
-                    default_position = no_ports_offset;
-                    no_ports_offset.y += node_height + row_height;
-                } else if (input_port_count == 0 && output_port_count != 0) {
-                    default_position = only_output_offset;
-                    only_output_offset.y += node_height + row_height;
-                } else if (input_port_count != 0 && output_port_count == 0) {
-                    default_position = only_inputs_offset;
-                    only_inputs_offset.y += node_height + row_height;
-                } else if (input_port_count != 0 && output_port_count != 0) {
-                    default_position = input_output_offset;
-                    input_output_offset.y += node_height + row_height;
-                }
-
-                // NOTE(simon): Grab cached node state or create a new one with
-                // default values.
-                GraphNode *graph_node = 0;
-                for (GraphNode *candidate = state->first_node; candidate; candidate = candidate->next) {
-                    if (pipewire_object_from_handle(candidate->handle) == node) {
-                        graph_node = candidate;
-                        break;
-                    }
-                }
-                if (!graph_node) {
-                    graph_node = state->node_freelist;
-                    if (graph_node) {
-                        sll_stack_pop(state->node_freelist);
-                        memory_zero_struct(graph_node);
-                    } else {
-                        graph_node = arena_push_struct(state->arena, GraphNode);
-                    }
-                    graph_node->handle = pipewire_handle_from_object(node);
-                    graph_node->position = default_position;
-                    dll_push_back(state->first_node, state->last_node, graph_node);
-                }
-                graph_node->last_frame_used = state->frame_index;
-
-                if (pipewire_object_from_handle(state->hovered_object) == node) {
-                    UI_Palette palette = ui_palette_top();
-                    palette.background = color_from_theme(ThemeColor_Focus);
-                    ui_palette_next(palette);
-                }
-
-                // NOTE(simon): Build node.
-                ui_corner_radius_next(5.0f);
-                ui_fixed_position_next(v2f32_subtract(graph_node->position, state->graph_offset));
-                ui_width_next(ui_size_pixels(node_width, 1.0f));
-                ui_height_next(ui_size_pixels(node_height, 1.0f));
-                ui_layout_axis_next(Axis2_Y);
-                UI_Box *node_box = ui_create_box_from_string_format(UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clickable, "###node_%u", node->id);
-                ui_parent(node_box)
-                ui_width(ui_size_fill())
-                ui_height(ui_size_pixels(row_height, 1.0f)) {
-                    ui_text_align_next(UI_TextAlign_Center);
-                    ui_label(name_from_object(node));
-
-                    // NOTE(simon): Build port columns.
-                    UI_Box *input_column  = &global_ui_null_box;
-                    UI_Box *output_column = &global_ui_null_box;
-                    ui_height(ui_size_fill())
-                    ui_row()
-                    ui_layout_axis(Axis2_Y) {
-                        ui_width_next(ui_size_pixels(input_port_name_max_width, 1.0f));
-                        input_column = ui_create_box(0);
-                        ui_spacer_sized(ui_size_fill());
-                        ui_width_next(ui_size_pixels(output_port_name_max_width, 1.0f));
-                        output_column = ui_create_box(0);
+                        ui_parent_next(output_column);
+                        ui_text_align_next(UI_TextAlign_Right);
+                        input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
                     }
 
-                    // NOTE(simon): Build ports.
-                    for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
-                        PortNode *port_node = arena_push_struct(frame_arena(), PortNode);
-                        port_node->port = child;
-
-                        Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
-                        Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
-
-                        UI_Input input = { 0 };
-                        if (str8_equal(direction, str8_literal("in"))) {
-                            ui_parent_next(input_column);
-                            ui_text_align_next(UI_TextAlign_Left);
-                            input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
-                        } else if (str8_equal(direction, str8_literal("out"))) {
-                            ui_parent_next(output_column);
-                            ui_text_align_next(UI_TextAlign_Right);
-                            input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
-                        }
-
-                        port_node->box = input.box;
-                        if (input.flags & UI_InputFlag_Clicked) {
-                            if (!pipewire_object_is_nil(pipewire_object_from_handle(state->selected_port))) {
-                                pipewire_link(state->selected_port, pipewire_handle_from_object(child));
-                                state->selected_port = pipewire_handle_from_object(&pipewire_nil_object);
-                            } else {
-                                state->selected_port = pipewire_handle_from_object(child);
-                            }
-                        }
-
-                        if (port_node->box) {
-                            dll_push_back(first_port, last_port, port_node);
+                    port_node->box = input.box;
+                    if (input.flags & UI_InputFlag_Clicked) {
+                        if (!pipewire_object_is_nil(pipewire_object_from_handle(state->selected_port))) {
+                            pipewire_link(state->selected_port, pipewire_handle_from_object(child));
+                            state->selected_port = pipewire_handle_from_object(&pipewire_nil_object);
+                        } else {
+                            state->selected_port = pipewire_handle_from_object(child);
                         }
                     }
-                }
 
-                UI_Input node_input = ui_input_from_box(node_box);
-                if (node_input.flags & UI_InputFlag_Hovering) {
-                    state->hovered_object_next = pipewire_handle_from_object(node);
-                }
-                if (node_input.flags & UI_InputFlag_RightClicked) {
-                    state->selected_object_next = pipewire_handle_from_object(node);
-                }
-                if (node_input.flags & UI_InputFlag_LeftDragging) {
-                    if (node_input.flags & UI_InputFlag_LeftPressed) {
-                        V2F32 drag_data = graph_node->position;
-                        ui_set_drag_data(&drag_data);
+                    if (port_node->box) {
+                        dll_push_back(first_port, last_port, port_node);
                     }
-
-                    V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
-                    V2F32 position_post_drag = v2f32_add(position_pre_drag, ui_drag_delta());
-                    graph_node->position = position_post_drag;
                 }
             }
 
-            // NOTE(simon): Draw connections.
-            Draw_List *connections = draw_list_create();
-            draw_list_scope(connections)
-            for (S64 i = 0; i < object_count; ++i) {
-                Pipewire_Object *node = objects[i];
-                if (node->kind != Pipewire_Object_Link) {
-                    continue;
-                }
-
-                // NOTE(simon): Find input and output ports.
-                PortNode *output_node = 0;
-                PortNode *input_node  = 0;
-                U32 output_port_id = pipewire_object_property_u32_from_name(node, str8_literal("link.output.port"));
-                U32 input_port_id  = pipewire_object_property_u32_from_name(node, str8_literal("link.input.port"));
-                for (PortNode *port_node = first_port; port_node; port_node = port_node->next) {
-                    if (port_node->port->id == output_port_id) {
-                        output_node = port_node;
-                    } else if (port_node->port->id == input_port_id) {
-                        input_node = port_node;
-                    }
-                }
-
-                // NOTE(simon): Draw two quadratic beziers to approximmate the
-                // look of a cubic beizer between ports.
-                if (output_node && input_node) {
-                    R2F32 absolute_output_rectangle = output_node->box->calculated_rectangle;
-                    R2F32 absolute_input_rectangle  = input_node->box->calculated_rectangle;
-                    V2F32 output_point = v2f32_subtract(v2f32(absolute_output_rectangle.max.x, 0.5f * (absolute_output_rectangle.min.y + absolute_output_rectangle.max.y)), node_graph_box->calculated_rectangle.min);
-                    V2F32 input_point  = v2f32_subtract(v2f32(absolute_input_rectangle.min.x,  0.5f * (absolute_input_rectangle.min.y  + absolute_input_rectangle.max.y)),  node_graph_box->calculated_rectangle.min);
-                    V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
-                    V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
-                    V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
-                    draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
-                    draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
-                }
+            UI_Input node_input = ui_input_from_box(node_box);
+            if (node_input.flags & UI_InputFlag_Hovering) {
+                state->hovered_object_next = pipewire_handle_from_object(node);
             }
-            ui_box_set_draw_list(node_graph_box, connections);
+            if (node_input.flags & UI_InputFlag_RightClicked) {
+                state->selected_object_next = pipewire_handle_from_object(node);
+            }
+            if (node_input.flags & UI_InputFlag_LeftDragging) {
+                if (node_input.flags & UI_InputFlag_LeftPressed) {
+                    V2F32 drag_data = graph_node->position;
+                    ui_set_drag_data(&drag_data);
+                }
+
+                V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
+                V2F32 position_post_drag = v2f32_add(position_pre_drag, ui_drag_delta());
+                graph_node->position = position_post_drag;
+            }
         }
-        UI_Input node_graph_input = ui_input_from_box(node_graph_box);
-        state->graph_offset = v2f32_subtract(state->graph_offset, v2f32_scale(node_graph_input.scroll, row_height));
-        if (node_graph_input.flags & UI_InputFlag_RightDragging) {
-            if (node_graph_input.flags & UI_InputFlag_RightPressed) {
-                V2F32 drag_data = state->graph_offset;
-                ui_set_drag_data(&drag_data);
+
+        // NOTE(simon): Draw connections.
+        Draw_List *connections = draw_list_create();
+        draw_list_scope(connections)
+        for (S64 i = 0; i < object_count; ++i) {
+            Pipewire_Object *node = objects[i];
+            if (node->kind != Pipewire_Object_Link) {
+                continue;
             }
 
-            V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
-            V2F32 position_post_drag = v2f32_subtract(position_pre_drag, ui_drag_delta());
-            state->graph_offset = position_post_drag;
+            // NOTE(simon): Find input and output ports.
+            PortNode *output_node = 0;
+            PortNode *input_node  = 0;
+            U32 output_port_id = pipewire_object_property_u32_from_name(node, str8_literal("link.output.port"));
+            U32 input_port_id  = pipewire_object_property_u32_from_name(node, str8_literal("link.input.port"));
+            for (PortNode *port_node = first_port; port_node; port_node = port_node->next) {
+                if (port_node->port->id == output_port_id) {
+                    output_node = port_node;
+                } else if (port_node->port->id == input_port_id) {
+                    input_node = port_node;
+                }
+            }
+
+            // NOTE(simon): Draw two quadratic beziers to approximmate the
+            // look of a cubic beizer between ports.
+            if (output_node && input_node) {
+                R2F32 absolute_output_rectangle = output_node->box->calculated_rectangle;
+                R2F32 absolute_input_rectangle  = input_node->box->calculated_rectangle;
+                V2F32 output_point = v2f32_subtract(v2f32(absolute_output_rectangle.max.x, 0.5f * (absolute_output_rectangle.min.y + absolute_output_rectangle.max.y)), node_graph_box->calculated_rectangle.min);
+                V2F32 input_point  = v2f32_subtract(v2f32(absolute_input_rectangle.min.x,  0.5f * (absolute_input_rectangle.min.y  + absolute_input_rectangle.max.y)),  node_graph_box->calculated_rectangle.min);
+                V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
+                V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
+                V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
+                draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+                draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+            }
         }
+        ui_box_set_draw_list(node_graph_box, connections);
+    }
+
+    UI_Input node_graph_input = ui_input_from_box(node_graph_box);
+    tab_state->graph_offset = v2f32_subtract(tab_state->graph_offset, v2f32_scale(node_graph_input.scroll, row_height));
+    if (node_graph_input.flags & UI_InputFlag_RightDragging) {
+        if (node_graph_input.flags & UI_InputFlag_RightPressed) {
+            V2F32 drag_data = tab_state->graph_offset;
+            ui_set_drag_data(&drag_data);
+        }
+
+        V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
+        V2F32 position_post_drag = v2f32_subtract(position_pre_drag, ui_drag_delta());
+        tab_state->graph_offset = position_post_drag;
     }
 }
 
@@ -1095,6 +1172,10 @@ internal Void update(Void) {
             }
         }
 
+        if (drag_is_active() && event->kind == Gfx_EventKind_KeyRelease && event->key == Gfx_Key_MouseLeft) {
+            state->drag_state = DragState_Dropping;
+        }
+
         if (consume) {
             dll_remove(graphics_events.first, graphics_events.last, event);
         }
@@ -1113,6 +1194,41 @@ internal Void update(Void) {
 
             switch (command->kind) {
                 case CommandKind_Null: {
+                } break;
+                case CommandKind_CloseTab: {
+                    Panel *panel = panel_from_handle(top_context()->panel);
+                    Tab   *tab   = tab_from_handle(top_context()->tab);
+
+                    if (!is_nil_panel(panel) && !is_nil_tab(tab)) {
+                        // NOTE(simon): Compute next active tab from this one.
+                        Tab *next_active_tab = &nil_tab;
+                        if (!is_nil_tab(tab->next)) {
+                            next_active_tab = tab->next;
+                        } else {
+                            next_active_tab = tab->previous;
+                        }
+
+                        // NOTE(simon): Update the active tab if we are removing it.
+                        if (tab_from_handle(panel->active_tab) == tab) {
+                            panel->active_tab = handle_from_tab(next_active_tab);
+                        }
+
+                        remove_tab(panel, tab);
+                        destroy_tab(tab);
+                    }
+                } break;
+                case CommandKind_MoveTab: {
+                    Panel  *panel              = panel_from_handle(top_context()->panel);
+                    Tab    *tab                = tab_from_handle(top_context()->tab);
+                    Window *destination_window = window_from_handle(top_context()->destination_window);
+                    Panel  *destination_panel  = panel_from_handle(top_context()->destination_panel);
+                    Tab    *previous_tab       = tab_from_handle(top_context()->previous_tab);
+
+                    if (!is_nil_panel(panel) && !is_nil_window(destination_window) && !is_nil_panel(destination_panel) && !is_nil_tab(tab) && tab != previous_tab) {
+                        remove_tab(panel, tab);
+                        insert_tab(destination_panel, previous_tab, tab);
+                        destination_window->active_panel = handle_from_panel(destination_panel);
+                    }
                 } break;
                 case CommandKind_NextTab: {
                     Panel *panel = panel_from_handle(top_context()->panel);
@@ -1209,6 +1325,147 @@ internal Void update(Void) {
                         window->active_panel = top_context()->panel;
                     }
                 } break;
+                case CommandKind_ClosePanel: {
+                    Window *window  = window_from_handle(top_context()->window);
+                    Panel  *panel   = panel_from_handle(top_context()->panel);
+                    Panel  *parent  = panel->parent;
+
+                    if (!is_nil_panel(panel) && !is_nil_panel(parent)) {
+                        // NOTE(simon): Update active panel, recursing into children if needed.
+                        Panel *active_panel = panel_from_handle(window->active_panel);
+                        if (active_panel == panel) {
+                            if (!is_nil_panel(panel->next)) {
+                                active_panel = panel->next;
+                                while (!is_nil_panel(active_panel->first)) {
+                                    active_panel = active_panel->first;
+                                }
+                            } else if (!is_nil_panel(panel->previous)) {
+                                active_panel = panel->previous;
+                                while (!is_nil_panel(active_panel->last)) {
+                                    active_panel = active_panel->last;
+                                }
+                            } else {
+                                active_panel = &nil_panel;
+                            }
+                            window->active_panel = handle_from_panel(active_panel);
+                        }
+
+                        if (parent->child_count == 2) {
+                            // NOTE(simon): Merge the panel that we keep with our grandparents.
+                            Panel *keep_child    = parent->first == panel ? parent->last : parent->first;
+                            Panel *grandparent   = parent->parent;
+                            Panel *previous      = parent->previous;
+
+                            remove_panel(parent, keep_child);
+
+                            // NOTE(simon): Insert the panel we are keeping into the tree.
+                            keep_child->percentage_of_parent = parent->percentage_of_parent;
+                            if (!is_nil_panel(grandparent)) {
+                                remove_panel(grandparent, parent);
+                                insert_panel(grandparent, previous, keep_child);
+                            } else {
+                                window->root_panel = keep_child;
+                            }
+
+                            destroy_panel(parent);
+
+                            // NOTE(simon): If the split axis of keep_child and grandparent are the same, merge their children.
+                            if (!is_nil_panel(grandparent) && !is_nil_panel(keep_child->first) && grandparent->split_axis == keep_child->split_axis) {
+                                Panel *child_previous = keep_child->previous;
+                                remove_panel(grandparent, keep_child);
+
+                                for (Panel *child = keep_child->first, *next; !is_nil_panel(child); child = next) {
+                                    next = child->next;
+
+                                    remove_panel(keep_child, child);
+                                    insert_panel(grandparent, child_previous, child);
+                                    child_previous = child;
+                                    child->percentage_of_parent *= keep_child->percentage_of_parent;
+                                }
+
+                                destroy_panel(keep_child);
+                            }
+                        } else {
+                            // NOTE(simon): Remove panel and adjust children to fill the empty space.
+                            remove_panel(parent, panel);
+
+                            for (Panel *child = parent->first; !is_nil_panel(child); child = child->next) {
+                                child->percentage_of_parent /= 1.0f - panel->percentage_of_parent;
+                            }
+
+                            destroy_panel(panel);
+                        }
+                    }
+                } break;
+                case CommandKind_SplitPanel: {
+                    Side    split_side   = side_from_direction2(top_context()->direction);
+                    Axis2   split_axis   = axis2_from_direction2(top_context()->direction);
+                    Panel  *split_panel  = panel_from_handle(top_context()->destination_panel);
+                    Window *split_window = window_from_handle(top_context()->window);
+                    Panel  *move_panel   = panel_from_handle(top_context()->panel);
+                    Tab    *move_tab     = tab_from_handle(top_context()->tab);
+
+                    Panel *new_panel = &nil_panel;
+                    if (!is_nil_panel(split_panel) && !is_nil_window(split_window) && top_context()->direction != Direction2_Invalid) {
+                        Panel *parent = split_panel->parent;
+
+                        if (!is_nil_panel(parent) && split_axis == parent->split_axis) {
+                            Panel *next = create_panel();
+                            insert_panel(parent, split_side == Side_Max ? split_panel : split_panel->previous, next);
+                            next->percentage_of_parent = 1.0f / (F32) parent->child_count;
+                            for (Panel *child = parent->first; !is_nil_panel(child); child = child->next) {
+                                if (child != next) {
+                                    child->percentage_of_parent *= (F32) (parent->child_count - 1) / (F32) parent->child_count;
+                                }
+                            }
+                            new_panel = next;
+                        } else {
+                            Panel *previous_previous = split_panel->previous;
+                            Panel *previous_parent   = parent;
+                            Panel *new_parent        = create_panel();
+
+                            new_parent->percentage_of_parent = split_panel->percentage_of_parent;
+                            if (!is_nil_panel(previous_parent)) {
+                                remove_panel(previous_parent, split_panel);
+                                insert_panel(previous_parent, previous_previous, new_parent);
+                            } else {
+                                split_window->root_panel = new_parent;
+                            }
+
+                            new_panel = create_panel();
+                            Panel *left  = split_panel;
+                            Panel *right = new_panel;
+                            if (split_side == Side_Min) {
+                                swap(left, right, Panel *);
+                            }
+
+                            insert_panel(new_parent, &nil_panel, left);
+                            insert_panel(new_parent, left, right);
+                            new_parent->split_axis = split_axis;
+                            left->percentage_of_parent  = 0.5f;
+                            right->percentage_of_parent = 0.5f;
+                        }
+
+                        if (!is_nil_panel(new_panel->previous)) {
+                            new_panel->animated_rectangle_percentage = new_panel->previous->animated_rectangle_percentage;
+                            new_panel->animated_rectangle_percentage.min.values[split_axis] = new_panel->animated_rectangle_percentage.max.values[split_axis];
+                        }
+                        if (!is_nil_panel(new_panel->next)) {
+                            new_panel->animated_rectangle_percentage = new_panel->next->animated_rectangle_percentage;
+                            new_panel->animated_rectangle_percentage.max.values[split_axis] = new_panel->animated_rectangle_percentage.min.values[split_axis];
+                        }
+                    }
+
+                    if (!is_nil_panel(new_panel) && !is_nil_panel(move_panel) && !is_nil_tab(move_tab)) {
+                        split_window->active_panel = handle_from_panel(new_panel);
+                        remove_tab(move_panel, move_tab);
+                        insert_tab(new_panel, new_panel->last_tab, move_tab);
+
+                        if (move_panel->child_count == 0 && move_panel != split_window->root_panel && move_panel != new_panel->next && move_panel != new_panel->previous) {
+                            push_command(CommandKind_ClosePanel, .panel = handle_from_panel(move_panel));
+                        }
+                    }
+                } break;
                 case CommandKind_COUNT: {
                 } break;
             }
@@ -1286,15 +1543,188 @@ internal Void update(Void) {
         ui_font_push(font_cache_font_from_static_data(&default_font));
         ui_font_size_push((U32) (state->font_size * gfx_dpi_from_window(window->window) / 72.0f));
 
+        // NOTE(simon): Only build preview if we are actually dragging the
+        // view. Otherwise, the tooltip will be clipped to the current window.
+        if (state->drag_state == DragState_Dragging && state->drag_context_member == ContextMember_Tab) {
+            push_context_internal(state->drag_context);
+            Tab *tab = tab_from_handle(top_context()->tab);
+            if (!is_nil_tab(tab)) {
+                ui_tooltip(global_ui_null_key) {
+                    ui_corner_radius_next(ui_size_ems(0.2f, 1.0f).value);
+                    ui_width_next(ui_size_ems(60.0f, 1.0f));
+                    ui_height_next(ui_size_ems(40.0f, 1.0f));
+                    ui_layout_axis_next(Axis2_X);
+                    UI_Box *preview_box = ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawDropShadow);
+                    ui_parent(preview_box)
+                    ui_padding(ui_size_ems(0.5f, 1.0f))
+                    ui_width(ui_size_fill())
+                    ui_height(ui_size_fill())
+                    ui_column()
+                    ui_padding(ui_size_ems(0.5f, 1.0f)) {
+                        ui_width_next(ui_size_text_content(0.0f, 1.0f));
+                        ui_height_next(ui_size_text_content(0.0f, 1.0f));
+                        ui_label(tab->name);
+
+                        ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
+
+                        ui_width_next(ui_size_fill());
+                        ui_height_next(ui_size_fill());
+                        UI_Box *content_box = ui_create_box_from_string(UI_BoxFlag_DrawBorder | UI_BoxFlag_Clip, str8_literal("###drag_preview"));
+
+                        ui_parent(content_box) {
+                            tab->build(content_box->calculated_rectangle);
+                        }
+                    }
+                }
+            } else {
+                drag_cancel();
+            }
+            pop_context();
+        }
+
         R2F32 top_bar_rectangle = { 0 };
         F32 border_width = 0.0f;
         R2F32 content_rectangle = r2f32_pad(r2f32(client_rectangle.min.x, top_bar_rectangle.max.y, client_rectangle.max.x, client_rectangle.max.y), -border_width);
         V2F32 content_size      = r2f32_size(content_rectangle);
 
         F32 panel_pad = 2.0f;
+        F32 drop_major_half_size = 3.5f * (F32) ui_font_size_top();
+        F32 drop_minor_half_size = 2.5f * (F32) ui_font_size_top();
+        F32 drop_padding         = 0.5f * (F32) ui_font_size_top();
+        F32 drop_corner_radius   = 0.5f * (F32) ui_font_size_top();
 
         // NOTE(simon): Build non-leaf panel UI.
         prof_zone_begin(prof_bulid_non_leaf_ui, "non-leaf ui");
+        // NOTE(simon): Build drop targets if we are dragging a tab.
+        if (drag_is_active() && state->drag_context_member == ContextMember_Tab) {
+            typedef struct DropTarget DropTarget;
+            struct DropTarget {
+                DropTarget *next;
+                Direction2  split_direction;
+                Panel      *split_panel;
+            };
+
+            DropTarget *first_drop_target = 0;
+            DropTarget *last_drop_target  = 0;
+
+            // NOTE(simon): Add extra drop targets for the root panel.
+            DropTarget *min_target = arena_push_struct(ui_frame_arena(), DropTarget);
+            min_target->split_direction = axis2_flip(window->root_panel->split_axis) == Axis2_X ? Direction2_Left : Direction2_Up;
+            min_target->split_panel = window->root_panel;
+            sll_queue_push(first_drop_target, last_drop_target, min_target);
+
+            DropTarget *max_target = arena_push_struct(ui_frame_arena(), DropTarget);
+            max_target->split_direction = axis2_flip(window->root_panel->split_axis) == Axis2_X ? Direction2_Right : Direction2_Down;
+            max_target->split_panel = window->root_panel;
+            sll_queue_push(first_drop_target, last_drop_target, max_target);
+
+            // NOTE(simon): Sandwich all children between drop targets.
+            for (Panel *panel = window->root_panel; !is_nil_panel(panel); panel = panel_iterator_depth_first_pre_order(panel, window->root_panel).next) {
+                if (is_nil_panel(panel->first)) {
+                    continue;
+                }
+
+                Axis2 split_axis = panel->split_axis;
+
+                for (Panel *child = panel->first; !is_nil_panel(child); child = child->next) {
+                    DropTarget *target      = arena_push_struct(ui_frame_arena(), DropTarget);
+                    target->split_direction = split_axis == Axis2_X ? Direction2_Left : Direction2_Up;
+                    target->split_panel     = child;
+                    sll_queue_push(first_drop_target, last_drop_target, target);
+                }
+
+                // NOTE(simon): Extra drop target at the end.
+                DropTarget *target      = arena_push_struct(ui_frame_arena(), DropTarget);
+                target->split_direction = split_axis == Axis2_X ? Direction2_Right : Direction2_Down;
+                target->split_panel     = panel->last;
+                sll_queue_push(first_drop_target, last_drop_target, target);
+            }
+
+            // NOTE(simon): Build drop targets.
+            ui_corner_radius(drop_corner_radius)
+            for (DropTarget *drop_target = first_drop_target; drop_target; drop_target = drop_target->next) {
+                // NOTE(simon): Unpack drop target parameters.
+                Axis2 split_axis      = axis2_from_direction2(drop_target->split_direction);
+                Side  split_side      = side_from_direction2(drop_target->split_direction);
+                R2F32 split_rectangle = rectangle_from_panel(drop_target->split_panel, content_rectangle);
+                V2F32 split_center    = r2f32_center(split_rectangle);
+
+                // NOTE(simon): Construct drop target location.
+                R2F32 drop_rectangle = { 0 };
+                drop_rectangle.min.values[split_axis] = split_rectangle.values[split_side].values[split_axis] - drop_minor_half_size;
+                drop_rectangle.max.values[split_axis] = split_rectangle.values[split_side].values[split_axis] + drop_minor_half_size;
+                drop_rectangle.min.values[axis2_flip(split_axis)] = split_center.values[axis2_flip(split_axis)] - drop_major_half_size;
+                drop_rectangle.max.values[axis2_flip(split_axis)] = split_center.values[axis2_flip(split_axis)] + drop_major_half_size;
+
+                UI_Key ui_key = ui_key_from_string_format(global_ui_null_key, "drop_boundary_%p_%i", drop_target->split_panel, drop_target->split_direction);
+
+                ui_fixed_position_next(drop_rectangle.min);
+                ui_width_next(ui_size_pixels(r2f32_size(drop_rectangle).width, 1.0f));
+                ui_height_next(ui_size_pixels(r2f32_size(drop_rectangle).height, 1.0f));
+                ui_layout_axis_next(Axis2_Y);
+                UI_Box *drop_site = ui_create_box_from_key(UI_BoxFlag_FloatingPosition | UI_BoxFlag_DropTarget, ui_key);
+
+                // NOTE(simon): Build visualization.
+                ui_parent(drop_site)
+                ui_width(ui_size_fill())
+                ui_height(ui_size_fill())
+                ui_padding(ui_size_pixels(drop_padding, 1.0f))
+                ui_row()
+                ui_padding(ui_size_pixels(drop_padding, 1.0f)) {
+                    ui_layout_axis_next(axis2_flip(split_axis));
+                    UI_Box *visualization = ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawDropShadow);
+                    ui_parent(visualization)
+                    ui_padding(ui_size_pixels(drop_padding, 1.0f))
+                    ui_palette(palette_from_theme(ThemePalette_Button)) {
+                        ui_layout_axis_next(split_axis);
+                        UI_Box *row_or_column = ui_create_box(0);
+                        ui_parent(row_or_column)
+                        ui_padding(ui_size_pixels(drop_padding, 1.0f)) {
+                            ui_create_box(UI_BoxFlag_DrawBorder);
+                            ui_spacer_sized(ui_size_pixels(drop_padding, 1.0f));
+                            ui_create_box(UI_BoxFlag_DrawBorder);
+                        }
+                    }
+                }
+
+                ui_input_from_box(drop_site);
+
+                // NOTE(simon): Build preview if we hover the drop target.
+                if (ui_keys_match(ui_key, ui_drop_hot_key())) {
+                    R2F32 target_rectangle = drop_rectangle;
+                    target_rectangle.min.values[split_axis] -= drop_major_half_size;
+                    target_rectangle.max.values[split_axis] += drop_major_half_size;
+                    target_rectangle.min.values[axis2_flip(split_axis)] = split_rectangle.min.values[axis2_flip(split_axis)] + drop_major_half_size;
+                    target_rectangle.max.values[axis2_flip(split_axis)] = split_rectangle.max.values[axis2_flip(split_axis)] - drop_major_half_size;
+
+                    R2F32 future_split_rectangle = r2f32(
+                        ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_min_x")), target_rectangle.min.x, .initial = drop_rectangle.min.x),
+                        ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_min_y")), target_rectangle.min.y, .initial = drop_rectangle.min.y),
+                        ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_max_x")), target_rectangle.max.x, .initial = drop_rectangle.max.x),
+                        ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_max_y")), target_rectangle.max.y, .initial = drop_rectangle.max.y)
+                    );
+
+                    ui_palette_next(palette_from_theme(ThemePalette_DropSiteOverlay));
+                    ui_fixed_position_next(future_split_rectangle.min);
+                    ui_width_next(ui_size_pixels(r2f32_size(future_split_rectangle).width, 1.0f));
+                    ui_height_next(ui_size_pixels(r2f32_size(future_split_rectangle).height, 1.0f));
+                    ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder);
+                }
+
+                // NOTE(simon): Execute the drop.
+                if (ui_keys_match(ui_key, ui_drop_hot_key()) && drag_drop()) {
+                    push_command(
+                        CommandKind_SplitPanel,
+                        .panel             = state->drag_context->panel,
+                        .tab               = state->drag_context->tab,
+                        .destination_panel = handle_from_panel(drop_target->split_panel),
+                        .direction         = drop_target->split_direction
+                    );
+                }
+            }
+        }
+
+        // NOTE(simon): Build panel boundaries.
         for (Panel *panel = window->root_panel; !is_nil_panel(panel); panel = panel_iterator_depth_first_pre_order(panel, window->root_panel).next) {
             if (is_nil_panel(panel->first)) {
                 continue;
@@ -1302,7 +1732,6 @@ internal Void update(Void) {
 
             R2F32 panel_rectangle      = rectangle_from_panel(panel, content_rectangle);
             V2F32 panel_rectangle_size = r2f32_size(panel_rectangle);
-            V2F32 panel_center         = r2f32_center(panel_rectangle);
 
             for (Panel *child = panel->first; !is_nil_panel(child->next); child = child->next) {
                 R2F32 child_rectangle = rectangle_from_panel(child, content_rectangle);
@@ -1404,6 +1833,153 @@ internal Void update(Void) {
             );
             Handle next_active_tab = panel->active_tab;
 
+            // NOTE(simon): Draw split boundaries if we are dragging a tab.
+            if (drag_is_active() && state->drag_context_member == ContextMember_Tab) {
+                V2F32 panel_center = r2f32_center(panel_rectangle);
+
+                typedef struct DropTarget DropTarget;
+                struct DropTarget {
+                    UI_Key     ui_key;
+                    Direction2 direction;
+                    R2F32      rectangle;
+                };
+                DropTarget targets[] = {
+                    {
+                        ui_key_from_string_format(global_ui_null_key, "drop_right_%p", panel),
+                        Direction2_Right,
+                        r2f32(
+                            panel_center.x + 2.0f * drop_major_half_size - drop_major_half_size, panel_center.y - drop_major_half_size,
+                            panel_center.x + 2.0f * drop_major_half_size + drop_major_half_size, panel_center.y + drop_major_half_size
+                        )
+                    },
+                    {
+                        ui_key_from_string_format(global_ui_null_key, "drop_down_%p", panel),
+                        Direction2_Down,
+                        r2f32(
+                            panel_center.x - drop_major_half_size, panel_center.y + 2.0f * drop_major_half_size - drop_major_half_size,
+                            panel_center.x + drop_major_half_size, panel_center.y + 2.0f * drop_major_half_size + drop_major_half_size
+                        )
+                    },
+                    {
+                        ui_key_from_string_format(global_ui_null_key, "drop_center_%p", panel),
+                        Direction2_Invalid,
+                        r2f32(
+                            panel_center.x - drop_major_half_size, panel_center.y - drop_major_half_size,
+                            panel_center.x + drop_major_half_size, panel_center.y + drop_major_half_size
+                        )
+                    },
+                    {
+                        ui_key_from_string_format(global_ui_null_key, "drop_left_%p", panel),
+                        Direction2_Left,
+                        r2f32(
+                            panel_center.x - 2.0f * drop_major_half_size - drop_major_half_size, panel_center.y - drop_major_half_size,
+                            panel_center.x - 2.0f * drop_major_half_size + drop_major_half_size, panel_center.y + drop_major_half_size
+                        )
+                    },
+                    {
+                        ui_key_from_string_format(global_ui_null_key, "drop_up_%p", panel),
+                        Direction2_Up,
+                        r2f32(
+                            panel_center.x - drop_major_half_size, panel_center.y - 2.0f * drop_major_half_size - drop_major_half_size,
+                            panel_center.x + drop_major_half_size, panel_center.y - 2.0f * drop_major_half_size + drop_major_half_size
+                        )
+                    },
+                };
+
+                ui_corner_radius(drop_corner_radius)
+                for (U64 i = 0; i < array_count(targets); ++i) {
+                    Axis2 split_axis = axis2_from_direction2(targets[i].direction);
+                    Side  split_side = side_from_direction2(targets[i].direction);
+
+                    if (targets[i].direction != Direction2_Invalid && !is_nil_panel(panel->parent) && split_axis == panel->parent->split_axis) {
+                        continue;
+                    }
+
+                    ui_fixed_position_next(targets[i].rectangle.min);
+                    ui_width_next(ui_size_pixels(r2f32_size(targets[i].rectangle).width, 1.0f));
+                    ui_height_next(ui_size_pixels(r2f32_size(targets[i].rectangle).height, 1.0f));
+                    ui_layout_axis_next(Axis2_Y);
+                    UI_Box *drop_site = ui_create_box_from_key(UI_BoxFlag_FloatingPosition | UI_BoxFlag_DropTarget, targets[i].ui_key);
+
+                    ui_parent(drop_site)
+                    ui_width(ui_size_fill())
+                    ui_height(ui_size_fill())
+                    ui_padding(ui_size_pixels(drop_padding, 1.0f))
+                    ui_row()
+                    ui_padding(ui_size_pixels(drop_padding, 1.0f)) {
+                        ui_layout_axis_next(axis2_flip(split_axis));
+                        UI_Box *visualization = ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawDropShadow);
+                        ui_parent(visualization)
+                        ui_padding(ui_size_pixels(drop_padding, 1.0f)) {
+                            ui_layout_axis_next(split_axis);
+                            UI_Box *row_or_column = ui_create_box(0);
+
+                            ui_parent(row_or_column)
+                            ui_padding(ui_size_pixels(drop_padding, 1.0f))
+                            ui_palette(palette_from_theme(ThemePalette_Button)) {
+                                if (targets[i].direction != Direction2_Invalid) {
+                                    ui_create_box((split_side == Side_Min ? UI_BoxFlag_DrawBackground : 0) | UI_BoxFlag_DrawBorder);
+                                    ui_spacer_sized(ui_size_pixels(drop_padding, 1.0f));
+                                    ui_create_box((split_side == Side_Max ? UI_BoxFlag_DrawBackground : 0) | UI_BoxFlag_DrawBorder);
+                                } else {
+                                    ui_create_box(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder);
+                                }
+                            }
+                        }
+                    }
+
+                    ui_input_from_box(drop_site);
+
+                    if (ui_keys_match(targets[i].ui_key, ui_drop_hot_key()) && drag_drop()) {
+                        if (targets[i].direction == Direction2_Invalid) {
+                            push_command(
+                                CommandKind_MoveTab,
+                                .window             = state->drag_context->window,
+                                .panel              = state->drag_context->panel,
+                                .tab                = state->drag_context->tab,
+                                .destination_window = handle_from_window(window),
+                                .destination_panel  = handle_from_panel(panel),
+                                .previous_tab       = panel->active_tab
+                            );
+                        } else {
+                            push_command(
+                                CommandKind_SplitPanel,
+                                .panel             = state->drag_context->panel,
+                                .tab               = state->drag_context->tab,
+                                .destination_panel = handle_from_panel(panel),
+                                .direction         = targets[i].direction
+                            );
+                        }
+                    }
+                }
+
+                ui_corner_radius(drop_corner_radius)
+                ui_palette(palette_from_theme(ThemePalette_DropSiteOverlay))
+                for (U64 i = 0; i < array_count(targets); ++i) {
+                    if (ui_keys_match(targets[i].ui_key, ui_drop_hot_key())) {
+                        Axis2 split_axis = axis2_from_direction2(targets[i].direction);
+                        Side  split_side = side_from_direction2(targets[i].direction);
+
+                        R2F32 target_rectangle = r2f32_pad(panel_rectangle, -drop_major_half_size);
+                        if (targets[i].direction != Direction2_Invalid) {
+                            target_rectangle.values[side_flip(split_side)].values[split_axis] = panel_center.values[split_axis];
+                        }
+
+                        R2F32 future_split_rectangle = r2f32(
+                            ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_min_x")), target_rectangle.min.x, .initial = panel_center.x),
+                            ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_min_y")), target_rectangle.min.y, .initial = panel_center.y),
+                            ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_max_x")), target_rectangle.max.x, .initial = panel_center.x),
+                            ui_animate(ui_key_from_string(global_ui_null_key, str8_literal("tab_drop_max_y")), target_rectangle.max.y, .initial = panel_center.y)
+                        );
+
+                        ui_fixed_position_next(future_split_rectangle.min);
+                        ui_width_next(ui_size_pixels(r2f32_size(future_split_rectangle).width, 1.0f));
+                        ui_height_next(ui_size_pixels(r2f32_size(future_split_rectangle).height, 1.0f));
+                        ui_create_box(UI_BoxFlag_DrawBackground);
+                    }
+                }
+            }
+
             // NOTE(simon): Focus panel if the user clicks inside of it.
             for (UI_Event *event = 0; ui_next_event(&event);) {
                 if (
@@ -1478,12 +2054,17 @@ internal Void update(Void) {
 
                     UI_Input close_input = ui_input_from_box(close_box);
                     if (close_input.flags & UI_InputFlag_LeftClicked) {
+                        push_command(CommandKind_CloseTab, .tab = handle_from_tab(tab));
                     }
                 }
 
                 UI_Input input = ui_input_from_box(tab_box);
                 if (input.flags & UI_InputFlag_LeftPressed) {
                     next_active_tab = handle_from_tab(tab);
+                }
+
+                if (input.flags & UI_InputFlag_LeftDragging && v2f32_length(ui_drag_delta()) > 10.0f) {
+                    drag_begin(ContextMember_Tab);
                 }
 
                 // NOTE(simon): Spacer between tabs.
@@ -1500,13 +2081,14 @@ internal Void update(Void) {
             ui_height_next(ui_size_pixels(r2f32_size(panel_content_rectangle).height, 1.0f));
             ui_focus_next(UI_Focus_Active);
             UI_Box *content_box = ui_create_box_from_string_format(
-                UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_Clip | UI_BoxFlag_DisableFocusOverlay |
+                UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_Clip | UI_BoxFlag_DisableFocusOverlay | (panel == panel_from_handle(window->active_panel) ? 0 : UI_BoxFlag_DisableFocusBorder) |
                 UI_BoxFlag_Clickable,
                 "###panel_box_%p", panel
             );
 
             ui_parent(content_box) {
-                build_view(panel_content_rectangle);
+                Tab *tab = tab_from_handle(panel->active_tab);
+                tab->build(panel_content_rectangle);
             }
 
             panel->active_tab = next_active_tab;
@@ -1751,6 +2333,11 @@ internal Void update(Void) {
             dll_remove(state->first_node, state->last_node, node);
             sll_stack_push(state->node_freelist, node);
         }
+    }
+
+    // NOTE(simon): Cancle drag-and-drpo if nothing caught it.
+    if (state->drag_state == DragState_Dropping) {
+        drag_cancel();
     }
 
     if (state->frames_to_render > 0) {
