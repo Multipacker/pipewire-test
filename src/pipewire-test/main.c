@@ -107,12 +107,15 @@ internal S32 os_run(Str8List arguments) {
     Tab *tab0 = create_tab(str8_literal("Object list"));
     Tab *tab1 = create_tab(str8_literal("Graph"));
     Tab *tab2 = create_tab(str8_literal("Properties"));
+    Tab *tab3 = create_tab(str8_literal("Parameters"));
     tab0->build = build_list_tab;
     tab1->build = build_graph_tab;
     tab2->build = build_property_tab;
+    tab3->build = build_parameter_tab;
     insert_tab(left,   &nil_tab, tab0);
     insert_tab(middle, &nil_tab, tab1);
     insert_tab(right,  &nil_tab, tab2);
+    insert_tab(right,  tab2,     tab3);
 
     window->active_panel = handle_from_panel(middle);
 

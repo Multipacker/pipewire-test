@@ -385,6 +385,7 @@ internal B32  drag_drop(Void);
 
 internal BUILD_TAB_FUNCTION(build_list_tab);
 internal BUILD_TAB_FUNCTION(build_property_tab);
+internal BUILD_TAB_FUNCTION(build_parameter_tab);
 internal BUILD_TAB_FUNCTION(build_graph_tab);
 
 #endif //CORE_H

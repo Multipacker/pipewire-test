@@ -614,8 +614,8 @@ internal BUILD_TAB_FUNCTION(build_property_tab) {
             ++property_count;
         }
         properties = arena_push_array(frame_arena(), Pipewire_Property *, (U64) property_count);
-        for (Pipewire_Property *property = selected_object->first_property, **propertie_ptr = properties; property; property = property->next) {
-            *propertie_ptr++ = property;
+        for (Pipewire_Property *property = selected_object->first_property, **property_ptr = properties; property; property = property->next) {
+            *property_ptr++ = property;
         }
     }
 
@@ -629,14 +629,6 @@ internal BUILD_TAB_FUNCTION(build_property_tab) {
         ui_height(ui_size_pixels(row_height, 1.0f))
         ui_row()
         ui_width(ui_size_text_content(0, 1.0f)) {
-            ui_font_next(ui_icon_font());
-            ui_text_x_padding_next(0.0f);
-            ui_text_align_next(UI_TextAlign_Center);
-            ui_width_next(ui_size_ems(1.5f, 1.0f));
-            UI_Input close_input = ui_button_format("%.*s###close_panel", str8_expand(ui_icon_string_from_kind(UI_IconKind_Close)));
-            if (close_input.flags & UI_InputFlag_Clicked) {
-                state->selected_object_next = pipewire_handle_from_object(0);
-            }
             ui_label(kind_from_object(selected_object));
             ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
             ui_label(name_from_object(selected_object));
@@ -800,6 +792,82 @@ internal BUILD_TAB_FUNCTION(build_property_tab) {
                             ui_label(property->value);
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+internal BUILD_TAB_FUNCTION(build_parameter_tab) {
+    typedef struct TabState TabState;
+    struct TabState {
+        UI_ScrollPosition selected_object_scroll_position;
+    };
+
+    TabState *tab_state = tab_state_from_type(TabState);
+
+    Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
+
+    // NOTE(simon): Collect all parameters.
+    S64 parameter_count = 0;
+    Pipewire_Parameter **parameters = 0;
+    {
+        for (Pipewire_Parameter *parameter = selected_object->first_parameter; parameter; parameter = parameter->next) {
+            ++parameter_count;
+        }
+        parameters = arena_push_array(frame_arena(), Pipewire_Parameter *, (U64) parameter_count);
+        for (Pipewire_Parameter *parameter = selected_object->first_parameter, **parameter_ptr = parameters; parameter; parameter = parameter->next) {
+            *parameter_ptr++ = parameter;
+        }
+    }
+
+    V2F32 tab_size   = r2f32_size(tab_rectangle);
+    F32   row_height = 2.0f * (F32) ui_font_size_top();
+
+    ui_width(ui_size_pixels(tab_size.width, 1.0f))
+    ui_height(ui_size_pixels(tab_size.height, 1.0f))
+    ui_column()
+    ui_text_x_padding(5.0f) {
+        ui_height(ui_size_pixels(row_height, 1.0f))
+        ui_row()
+        ui_width(ui_size_text_content(0, 1.0f)) {
+            ui_label(kind_from_object(selected_object));
+            ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
+            ui_label(name_from_object(selected_object));
+        }
+
+        R1S64 visible_range = { 0 };
+        ui_palette(palette_from_theme(ThemePalette_Button))
+        ui_scroll_region(v2f32(tab_size.x, tab_size.y - row_height), row_height, parameter_count, &visible_range, 0, &tab_state->selected_object_scroll_position) {
+            for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+                Pipewire_Parameter *parameter = parameters[i];
+
+                ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                ui_row()
+                ui_width(ui_size_parent_percent(0.5f, 1.0f)) {
+                    CStr param_type_string = "";
+                    switch (parameter->id) {
+                        case SPA_PARAM_Invalid:        param_type_string = "Invalid";        break;
+                        case SPA_PARAM_PropInfo:       param_type_string = "PropInfo";       break;
+                        case SPA_PARAM_Props:          param_type_string = "Props";          break;
+                        case SPA_PARAM_EnumFormat:     param_type_string = "EnumFormat";     break;
+                        case SPA_PARAM_Format:         param_type_string = "Format";         break;
+                        case SPA_PARAM_Buffers:        param_type_string = "Buffers";        break;
+                        case SPA_PARAM_Meta:           param_type_string = "Meta";           break;
+                        case SPA_PARAM_IO:             param_type_string = "IO";             break;
+                        case SPA_PARAM_EnumProfile:    param_type_string = "EnumProfile";    break;
+                        case SPA_PARAM_Profile:        param_type_string = "Profile";        break;
+                        case SPA_PARAM_EnumPortConfig: param_type_string = "EnumPortConfig"; break;
+                        case SPA_PARAM_PortConfig:     param_type_string = "PortConfig";     break;
+                        case SPA_PARAM_EnumRoute:      param_type_string = "EnumRoute";      break;
+                        case SPA_PARAM_Route:          param_type_string = "Route";          break;
+                        case SPA_PARAM_Control:        param_type_string = "Control";        break;
+                        case SPA_PARAM_Latency:        param_type_string = "Latency";        break;
+                        case SPA_PARAM_ProcessLatency: param_type_string = "ProcessLatency"; break;
+                        case SPA_PARAM_Tag:            param_type_string = "Tag";            break;
+                    }
+                    ui_label_format("%s", param_type_string);
+                    ui_label_format("%p", parameter->param);
                 }
             }
         }
