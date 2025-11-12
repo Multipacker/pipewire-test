@@ -59,6 +59,13 @@ internal Void pipewire_destroy_object(Pipewire_Object *object) {
         sll_stack_push(pipewire_state->property_freelist, property);
     }
 
+    for (Pipewire_Parameter *parameter = object->first_parameter, *next = 0; parameter; parameter = next) {
+        next = parameter->next;
+        dll_remove(object->first_parameter, object->last_parameter, parameter);
+        pipewire_spa_pod_free(parameter->param);
+        sll_stack_push(pipewire_state->parameter_freelist, parameter);
+    }
+
     spa_hook_remove(&object->listener);
     pw_proxy_destroy(object->proxy);
 
@@ -79,19 +86,22 @@ internal Void pipewire_object_update_property(Pipewire_Object *object, Str8 name
 
     if (!pipewire_property_is_nil(existing_property)) {
         pipewire_string_free(existing_property->value);
-        existing_property->value = pipewire_string_allocate(value);
     } else {
         Pipewire_Property *property = pipewire_state->property_freelist;
         if (property) {
             sll_stack_pop(pipewire_state->property_freelist);
+            memory_zero_struct(property);
         } else {
             property = arena_push_struct(pipewire_state->arena, Pipewire_Property);
         }
 
         property->name = pipewire_string_allocate(name);
-        property->value = pipewire_string_allocate(value);
         dll_push_back(object->first_property, object->last_property, property);
+
+        existing_property = property;
     }
+
+    existing_property->value = pipewire_string_allocate(value);
 }
 
 internal Pipewire_Property *pipewire_object_property_from_name(Pipewire_Object *object, Str8 name) {
@@ -114,6 +124,47 @@ internal U32 pipewire_object_property_u32_from_name(Pipewire_Object *object, Str
     Pipewire_Property *property = pipewire_object_property_from_name(object, name);
     U64Decode decode = u64_from_str8(property->value);
     return (U32) decode.value;
+}
+
+
+
+internal B32 pipewire_parameter_is_nil(Pipewire_Parameter *parameter) {
+    B32 result = !parameter || parameter == &pipewire_nil_parameter;
+    return result;
+}
+
+internal Void pipewire_object_update_parameter(Pipewire_Object *object, U32 id, struct spa_pod *param) {
+    Pipewire_Parameter *existing_parameter = pipewire_object_parameter_from_id(object, id);
+
+    if (!pipewire_parameter_is_nil(existing_parameter)) {
+        pipewire_spa_pod_free(existing_parameter->param);
+    } else {
+        Pipewire_Parameter *parameter = pipewire_state->parameter_freelist;
+        if (parameter) {
+            sll_stack_pop(pipewire_state->parameter_freelist);
+            memory_zero_struct(parameter);
+        } else {
+            parameter = arena_push_struct(pipewire_state->arena, Pipewire_Parameter);
+        }
+
+        parameter->id = id;
+        dll_push_back(object->first_parameter, object->last_parameter, parameter);
+
+        existing_parameter = parameter;
+    }
+
+    existing_parameter->param = pipewire_spa_pod_allocate(param);
+}
+
+internal Pipewire_Parameter *pipewire_object_parameter_from_id(Pipewire_Object *object, U32 id) {
+    Pipewire_Parameter *result = &pipewire_nil_parameter;
+    for (Pipewire_Parameter *parameter = object->first_parameter; parameter; parameter = parameter->next) {
+        if (parameter->id == id) {
+            result = parameter;
+            break;
+        }
+    }
+    return result;
 }
 
 
@@ -291,6 +342,8 @@ internal Void pipewire_link(Pipewire_Handle output_handle, Pipewire_Handle input
 internal Void pipewire_module_info(Void *data, const struct pw_module_info *info) {
     Pipewire_Object *module = (Pipewire_Object *) data;
 
+    module->module_info = pw_module_info_update(module->module_info, info);
+
     printf("module: id:%u\n", info->id);
     printf("  filename:  %s\n", info->filename);
     printf("  arguments: %s\n", info->args);
@@ -312,6 +365,8 @@ internal Void pipewire_module_info(Void *data, const struct pw_module_info *info
 internal Void pipewire_factory_info(Void *data, const struct pw_factory_info *info) {
     Pipewire_Object *factory = (Pipewire_Object *) data;
 
+    factory->factory_info = pw_factory_info_update(factory->factory_info, info);
+
     printf("factory: id:%u\n", info->id);
     printf("  type: %s\n", info->type);
     printf("  change mask:");
@@ -332,6 +387,8 @@ internal Void pipewire_factory_info(Void *data, const struct pw_factory_info *in
 internal Void pipewire_client_info(Void *data, const struct pw_client_info *info) {
     Pipewire_Object *client = (Pipewire_Object *) data;
 
+    client->client_info = pw_client_info_update(client->client_info, info);
+
     printf("client: id:%u\n", info->id);
     if (info->change_mask & PW_CLIENT_CHANGE_MASK_PROPS) {
         const struct spa_dict_item *item = 0;
@@ -346,6 +403,25 @@ internal Void pipewire_client_info(Void *data, const struct pw_client_info *info
 
 internal Void pipewire_node_info(Void *data, const struct pw_node_info *info) {
     Pipewire_Object *node = (Pipewire_Object *) data;
+
+    node->node_info = pw_node_info_update(node->node_info, info);
+    if (info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) {
+        for (U32 i = 0; i < info->n_params; ++i) {
+            // NOTE(simon): Only enumerate paramters that have changed.
+            if (info->params[i].user == 0) {
+                continue;
+            }
+            info->params[i].user = 0;
+
+            // NOTE(simon): No purpose in requesting parameters that we cannot read.
+            if (!(info->params[i].flags & SPA_PARAM_INFO_READ)) {
+                continue;
+            }
+
+            // TODO(simon): Keep track of sequence numbers to know if we have the most up to date information.
+            pw_node_enum_params((struct pw_node *) node->proxy, 0, info->params[i].id, 0, U32_MAX, 0);
+        }
+    }
 
     printf("node: id:%u\n", info->id);
     printf("  max input ports:  %u\n", info->max_input_ports);
@@ -397,17 +473,6 @@ internal Void pipewire_node_info(Void *data, const struct pw_node_info *info) {
     }
     if (info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) {
         printf("  params:\n");
-        Arena_Temporary scratch = arena_get_scratch(0, 0);
-        U32 *ids = arena_push_array(scratch.arena, U32, info->n_params);
-        for (U32 i = 0; i < info->n_params; ++i) {
-            ids[i] = info->params[i].id;
-        }
-        int error = pw_node_subscribe_params((struct pw_node *) node->proxy, ids, info->n_params);
-        arena_end_temporary(scratch);
-        //int error = pw_node_enum_params((struct pw_node *) node->proxy, 0, PW_ID_ANY, 0, info->n_params, 0);
-        if (error < 0) {
-            printf("ERROR, %s\n", spa_strerror(error));
-        }
         for (U32 i = 0; i < info->n_params; ++i) {
             CStr param_id_string = "";
             switch (info->params[i].id) {
@@ -437,6 +502,9 @@ internal Void pipewire_node_info(Void *data, const struct pw_node_info *info) {
 
 internal Void pipewire_node_param(Void *data, S32 seq, U32 id, U32 index, U32 next, const struct spa_pod *param) {
     Pipewire_Object *node = (Pipewire_Object *) data;
+
+    pipewire_object_update_parameter(node, id, (struct spa_pod *) param);
+
     printf("node: id:%u\n", node->id);
     printf("  param %u:\n", index);
     CStr param_type_string = "";
@@ -590,6 +658,25 @@ internal Void pipewire_node_param(Void *data, S32 seq, U32 id, U32 index, U32 ne
 internal Void pipewire_port_info(Void *data, const struct pw_port_info *info) {
     Pipewire_Object *port = (Pipewire_Object *) data;
 
+    port->port_info = pw_port_info_update(port->port_info, info);
+    if (info->change_mask & PW_PORT_CHANGE_MASK_PARAMS) {
+        for (U32 i = 0; i < info->n_params; ++i) {
+            // NOTE(simon): Only enumerate paramters that have changed.
+            if (info->params[i].user == 0) {
+                continue;
+            }
+            info->params[i].user = 0;
+
+            // NOTE(simon): No purpose in requesting parameters that we cannot read.
+            if (!(info->params[i].flags & SPA_PARAM_INFO_READ)) {
+                continue;
+            }
+
+            // TODO(simon): Keep track of sequence numbers to know if we have the most up to date information.
+            pw_port_enum_params((struct pw_port *) port->proxy, 0, info->params[i].id, 0, U32_MAX, 0);
+        }
+    }
+
     const char *direction = "";
     switch (info->direction) {
         case PW_DIRECTION_INPUT:  direction = "input";  break;
@@ -629,12 +716,34 @@ internal Void pipewire_port_info(Void *data, const struct pw_port_info *info) {
 }
 
 internal Void pipewire_port_param(Void *data, S32 seq, U32 id, U32 index, U32 next, const struct spa_pod *param) {
+    Pipewire_Object *port = (Pipewire_Object *) data;
+
+    pipewire_object_update_parameter(port, id, (struct spa_pod *) param);
 }
 
 
 
 internal Void pipewire_device_info(Void *data, const struct pw_device_info *info) {
     Pipewire_Object *device = data;
+
+    device->device_info = pw_device_info_update(device->device_info, info);
+    if (info->change_mask & PW_DEVICE_CHANGE_MASK_PARAMS) {
+        for (U32 i = 0; i < info->n_params; ++i) {
+            // NOTE(simon): Only enumerate paramters that have changed.
+            if (info->params[i].user == 0) {
+                continue;
+            }
+            info->params[i].user = 0;
+
+            // NOTE(simon): No purpose in requesting parameters that we cannot read.
+            if (!(info->params[i].flags & SPA_PARAM_INFO_READ)) {
+                continue;
+            }
+
+            // TODO(simon): Keep track of sequence numbers to know if we have the most up to date information.
+            pw_device_enum_params((struct pw_device *) device->proxy, 0, info->params[i].id, 0, U32_MAX, 0);
+        }
+    }
 
     printf("device: id:%u\n", info->id);
     printf("  change mask:");
@@ -650,12 +759,17 @@ internal Void pipewire_device_info(Void *data, const struct pw_device_info *info
 }
 
 internal Void pipewire_device_param(Void *data, S32 seq, U32 id, U32 index, U32 next, const struct spa_pod *param) {
+    Pipewire_Object *device = (Pipewire_Object *) data;
+
+    pipewire_object_update_parameter(device, id, (struct spa_pod *) param);
 }
 
 
 
 internal Void pipewire_link_info(Void *data, const struct pw_link_info *info) {
     Pipewire_Object *link = (Pipewire_Object *) data;
+
+    link->link_info = pw_link_info_update(link->link_info, info);
 
     printf("link: id:%u\n", info->id);
     printf("  output node id: %u\n", info->output_node_id);

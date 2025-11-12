@@ -44,6 +44,16 @@ struct Pipewire_Property {
 
 global Pipewire_Property pipewire_nil_property = { 0 };
 
+typedef struct Pipewire_Parameter Pipewire_Parameter;
+struct Pipewire_Parameter {
+    Pipewire_Parameter *next;
+    Pipewire_Parameter *previous;
+    U32 id;
+    struct spa_pod *param;
+};
+
+global Pipewire_Parameter pipewire_nil_parameter = { 0 };
+
 typedef enum {
     Pipewire_Object_Null,
     Pipewire_Object_Module,
@@ -74,8 +84,20 @@ struct Pipewire_Object {
     Pipewire_Property *first_property;
     Pipewire_Property *last_property;
 
+    Pipewire_Parameter *first_parameter;
+    Pipewire_Parameter *last_parameter;
+
     struct pw_proxy *proxy;
     struct spa_hook  listener;
+
+    // NOTE(simon): Low-level data storage.
+    struct pw_module_info  *module_info;
+    struct pw_factory_info *factory_info;
+    struct pw_client_info  *client_info;
+    struct pw_node_info    *node_info;
+    struct pw_port_info    *port_info;
+    struct pw_device_info  *device_info;
+    struct pw_link_info    *link_info;
 };
 
 global Pipewire_Object pipewire_nil_object = {
@@ -95,6 +117,7 @@ struct Pipewire_State {
     Pipewire_Object *object_freelist;
     Pipewire_ChunkNode *chunk_freelist[array_count(pipewire_chunk_sizes)];
     Pipewire_Property *property_freelist;
+    Pipewire_Parameter *parameter_freelist;
 
     struct pw_main_loop *loop;
     struct pw_context   *context;
@@ -117,6 +140,10 @@ internal Void               pipewire_object_update_property(Pipewire_Object *obj
 internal Pipewire_Property *pipewire_object_property_from_name(Pipewire_Object *object, Str8 name);
 internal Str8               pipewire_object_property_string_from_name(Pipewire_Object *object, Str8 name);
 internal U32                pipewire_object_property_u32_from_name(Pipewire_Object *object, Str8 name);
+
+internal B32                 pipewire_parameter_is_nil(Pipewire_Parameter *parameter);
+internal Void                pipewire_object_update_parameter(Pipewire_Object *object, U32 id, struct spa_pod *param);
+internal Pipewire_Parameter *pipewire_object_parameter_from_id(Pipewire_Object *object, U32 id);
 
 internal U64             pipewire_chunk_index_from_size(U64 size);
 internal U8             *pipewire_allocate(U64 size);
