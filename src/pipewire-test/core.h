@@ -103,17 +103,6 @@ internal UI_Palette palette_from_theme(ThemePalette palette);
 
 // NOTE(simon): Patchbay
 
-typedef struct GraphNode GraphNode;
-struct GraphNode {
-    GraphNode *next;
-    GraphNode *previous;
-    V2F32      position;
-
-    Pipewire_Handle handle;
-
-    U64 last_frame_used;
-};
-
 typedef struct Handle Handle;
 struct Handle {
     U64 u64[2];
@@ -301,10 +290,6 @@ struct State {
     ContextMember drag_context_member;
 
     F32 font_size;
-
-    GraphNode *first_node;
-    GraphNode *last_node;
-    GraphNode *node_freelist;
 
     Pipewire_Handle selected_object;
     Pipewire_Handle selected_object_next;

@@ -1117,9 +1117,24 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
 }
 
 internal BUILD_TAB_FUNCTION(build_graph_tab) {
+    typedef struct GraphNode GraphNode;
+    struct GraphNode {
+        GraphNode *next;
+        GraphNode *previous;
+        V2F32      position;
+
+        U64 last_frame_touched;
+
+        Pipewire_Handle handle;
+    };
+
     typedef struct TabState TabState;
     struct TabState {
         V2F32 graph_offset;
+
+        GraphNode *first_node;
+        GraphNode *last_node;
+        GraphNode *node_freelist;
     };
 
     TabState *tab_state = tab_state_from_type(TabState);
@@ -1216,25 +1231,25 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
             // NOTE(simon): Grab cached node state or create a new one with
             // default values.
             GraphNode *graph_node = 0;
-            for (GraphNode *candidate = state->first_node; candidate; candidate = candidate->next) {
+            for (GraphNode *candidate = tab_state->first_node; candidate; candidate = candidate->next) {
                 if (pipewire_object_from_handle(candidate->handle) == node) {
                     graph_node = candidate;
                     break;
                 }
             }
             if (!graph_node) {
-                graph_node = state->node_freelist;
+                graph_node = tab_state->node_freelist;
                 if (graph_node) {
-                    sll_stack_pop(state->node_freelist);
+                    sll_stack_pop(tab_state->node_freelist);
                     memory_zero_struct(graph_node);
                 } else {
-                    graph_node = arena_push_struct(state->arena, GraphNode);
+                    graph_node = arena_push_struct(tab_from_handle(top_context()->tab)->arena, GraphNode);
                 }
                 graph_node->handle = pipewire_handle_from_object(node);
                 graph_node->position = default_position;
-                dll_push_back(state->first_node, state->last_node, graph_node);
+                dll_push_back(tab_state->first_node, tab_state->last_node, graph_node);
             }
-            graph_node->last_frame_used = state->frame_index;
+            graph_node->last_frame_touched = state->frame_index;
 
             if (pipewire_object_from_handle(state->hovered_object) == node) {
                 UI_Palette palette = ui_palette_top();
@@ -1372,6 +1387,16 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
         V2F32 position_pre_drag = *ui_get_drag_data(V2F32);
         V2F32 position_post_drag = v2f32_subtract(position_pre_drag, ui_drag_delta());
         tab_state->graph_offset = position_post_drag;
+    }
+
+    // NOTE(simon): Recycle nodes that haven't been touched this build.
+    for (GraphNode *node = tab_state->first_node, *next = 0; node; node = next) {
+        next = node->next;
+
+        if (node->last_frame_touched != state->frame_index) {
+            dll_remove(tab_state->first_node, tab_state->last_node, node);
+            sll_stack_push(tab_state->node_freelist, node);
+        }
     }
 }
 
@@ -2639,16 +2664,6 @@ internal Void update(Void) {
     }
     render_end();
     prof_zone_end(prof_zone_render);
-
-    // NOTE(simon): Evict untouched entries from graph node cache.
-    for (GraphNode *node = state->first_node, *next = 0; node; node = next) {
-        next = node->next;
-
-        if (node->last_frame_used != state->frame_index) {
-            dll_remove(state->first_node, state->last_node, node);
-            sll_stack_push(state->node_freelist, node);
-        }
-    }
 
     // NOTE(simon): Cancle drag-and-drpo if nothing caught it.
     if (state->drag_state == DragState_Dropping) {
