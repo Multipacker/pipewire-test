@@ -629,125 +629,95 @@ internal BUILD_TAB_FUNCTION(build_property_tab) {
     V2F32 tab_size   = r2f32_size(tab_rectangle);
     F32   row_height = 2.0f * (F32) ui_font_size_top();
 
-    ui_width(ui_size_pixels(tab_size.width, 1.0f))
-    ui_height(ui_size_pixels(tab_size.height, 1.0f))
-    ui_column()
-    ui_text_x_padding(5.0f) {
-        ui_height(ui_size_pixels(row_height, 1.0f))
-        ui_row()
-        ui_width(ui_size_text_content(0, 1.0f)) {
-            ui_label(kind_from_object(selected_object));
-            ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
-            ui_label(name_from_object(selected_object));
-        }
+    R1S64 visible_range = { 0 };
+    ui_palette(palette_from_theme(ThemePalette_Button))
+    ui_font(font_cache_font_from_static_data(&mono_font))
+    ui_scroll_region(tab_size, row_height, property_count, &visible_range, 0, &tab_state->scroll_position)
+    ui_text_x_padding(5.0f)
+    ui_palette(palette_from_theme(ThemePalette_Base)) {
+        // NOTE(simon): Build column resize handles
+        F32 column_position = 0.0f;
+        F32 container_width = ui_parent_top()->size[Axis2_X].value;
+        ui_fixed_y(0.0f)
+        ui_width(ui_size_pixels(5.0f, 1.0f))
+        ui_height(ui_size_pixels(row_height * (F32) r1s64_size(visible_range), 1.0f))
+        ui_hover_cursor(Gfx_Cursor_SizeWE)
+        for (U32 i = 0; i < array_count(tab_state->column_widths) - 1; ++i) {
+            column_position += tab_state->column_widths[i];
 
-        ui_width(ui_size_pixels(tab_size.x - (F32) ui_font_size_top(), 1.0f))
-        ui_height(ui_size_pixels(row_height, 1.0f))
-        ui_row() {
-            ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
-            ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-            ui_row() {
-                ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                ui_label(str8_literal("Property"));
-            }
+            ui_fixed_x_next(column_position * container_width);
+            UI_Box *handle = ui_create_box_from_string_format(UI_BoxFlag_Clickable, "###resize_handle_%u", i);
+            UI_Input input = ui_input_from_box(handle);
 
-            ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
-            ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-            ui_row() {
-                ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                ui_label(str8_literal("Value"));
-            }
-        }
-
-        R1S64 visible_range = { 0 };
-        ui_palette(palette_from_theme(ThemePalette_Button))
-        ui_font(font_cache_font_from_static_data(&mono_font))
-        ui_scroll_region(v2f32(tab_size.x, tab_size.y - 2.0f * row_height), row_height, property_count, &visible_range, 0, &tab_state->scroll_position)
-        ui_palette(palette_from_theme(ThemePalette_Base)) {
-            // NOTE(simon): Build column resize handles
-            F32 column_position = 0.0f;
-            F32 container_width = ui_parent_top()->size[Axis2_X].value;
-            ui_fixed_y(0.0f)
-            ui_width(ui_size_pixels(5.0f, 1.0f))
-            ui_height(ui_size_pixels(row_height * (F32) r1s64_size(visible_range), 1.0f))
-            ui_hover_cursor(Gfx_Cursor_SizeWE)
-            for (U32 i = 0; i < array_count(tab_state->column_widths) - 1; ++i) {
-                column_position += tab_state->column_widths[i];
-
-                ui_fixed_x_next(column_position * container_width);
-                UI_Box *handle = ui_create_box_from_string_format(UI_BoxFlag_Clickable, "###resize_handle_%u", i);
-                UI_Input input = ui_input_from_box(handle);
-
-                if (input.flags & UI_InputFlag_LeftDragging) {
-                    if (input.flags & UI_InputFlag_LeftPressed) {
-                        F32 min_width = tab_state->column_widths[i + 0];
-                        F32 max_width = tab_state->column_widths[i + 1];
-                        V2F32 drag_data = v2f32(min_width, max_width);
-                        ui_set_drag_data(&drag_data);
-                    }
-
-                    V2F32 drag_data = *ui_get_drag_data(V2F32);
-
-                    F32 min_width_percentage_pre_drag = drag_data.x;
-                    F32 max_width_percentage_pre_drag = drag_data.y;
-                    F32 min_width_pixels_pre_drag = container_width * min_width_percentage_pre_drag;
-                    F32 max_width_pixels_pre_drag = container_width * max_width_percentage_pre_drag;
-
-                    F32 drag_delta = ui_drag_delta().x;
-                    F32 clamped_drag_delta = drag_delta;
-                    if (drag_delta < 0.0f) {
-                        clamped_drag_delta = -f32_min(-drag_delta, min_width_pixels_pre_drag);
-                    } else {
-                        clamped_drag_delta = f32_min(drag_delta, max_width_pixels_pre_drag);
-                    }
-
-                    F32 min_width_pixels_post_drag = min_width_pixels_pre_drag + clamped_drag_delta;
-                    F32 max_width_pixels_post_drag = max_width_pixels_pre_drag - clamped_drag_delta;
-                    F32 min_width_percentage_post_drag = min_width_pixels_post_drag / container_width;
-                    F32 max_width_percentage_post_drag = max_width_pixels_post_drag / container_width;
-                    tab_state->column_widths[i + 0] = min_width_percentage_post_drag;
-                    tab_state->column_widths[i + 1] = max_width_percentage_post_drag;
-                }
-            }
-
-            // NOTE(simon): Build rows.
-            for (S64 i = visible_range.min; i < visible_range.max; ++i) {
-                Pipewire_Property *property = properties[i];
-
-                // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
-                Pipewire_Object *reference = &pipewire_nil_object;
-                Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
-                if (
-                    str8_equal(last_component, str8_literal("id")) ||
-                    str8_equal(last_component, str8_literal("client")) ||
-                    str8_equal(last_component, str8_literal("device")) ||
-                    str8_equal(last_component, str8_literal("node")) ||
-                    str8_equal(last_component, str8_literal("port"))
-                ) {
-                    U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
-                    reference = pipewire_object_from_id(id);
+            if (input.flags & UI_InputFlag_LeftDragging) {
+                if (input.flags & UI_InputFlag_LeftPressed) {
+                    F32 min_width = tab_state->column_widths[i + 0];
+                    F32 max_width = tab_state->column_widths[i + 1];
+                    V2F32 drag_data = v2f32(min_width, max_width);
+                    ui_set_drag_data(&drag_data);
                 }
 
-                ui_width(ui_size_parent_percent(1.0f, 1.0f))
+                V2F32 drag_data = *ui_get_drag_data(V2F32);
+
+                F32 min_width_percentage_pre_drag = drag_data.x;
+                F32 max_width_percentage_pre_drag = drag_data.y;
+                F32 min_width_pixels_pre_drag = container_width * min_width_percentage_pre_drag;
+                F32 max_width_pixels_pre_drag = container_width * max_width_percentage_pre_drag;
+
+                F32 drag_delta = ui_drag_delta().x;
+                F32 clamped_drag_delta = drag_delta;
+                if (drag_delta < 0.0f) {
+                    clamped_drag_delta = -f32_min(-drag_delta, min_width_pixels_pre_drag);
+                } else {
+                    clamped_drag_delta = f32_min(drag_delta, max_width_pixels_pre_drag);
+                }
+
+                F32 min_width_pixels_post_drag = min_width_pixels_pre_drag + clamped_drag_delta;
+                F32 max_width_pixels_post_drag = max_width_pixels_pre_drag - clamped_drag_delta;
+                F32 min_width_percentage_post_drag = min_width_pixels_post_drag / container_width;
+                F32 max_width_percentage_post_drag = max_width_pixels_post_drag / container_width;
+                tab_state->column_widths[i + 0] = min_width_percentage_post_drag;
+                tab_state->column_widths[i + 1] = max_width_percentage_post_drag;
+            }
+        }
+
+        // NOTE(simon): Build rows.
+        for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+            Pipewire_Property *property = properties[i];
+
+            // NOTE(simon): Use heuristics to determine if the property is a reference to another object.
+            Pipewire_Object *reference = &pipewire_nil_object;
+            Str8 last_component = str8_skip(property->name, 1 + str8_last_index_of(property->name, '.'));
+            if (
+                str8_equal(last_component, str8_literal("id")) ||
+                str8_equal(last_component, str8_literal("client")) ||
+                str8_equal(last_component, str8_literal("device")) ||
+                str8_equal(last_component, str8_literal("node")) ||
+                str8_equal(last_component, str8_literal("port"))
+            ) {
+                U32 id = pipewire_object_property_u32_from_name(selected_object, property->name);
+                reference = pipewire_object_from_id(id);
+            }
+
+            ui_width(ui_size_parent_percent(1.0f, 1.0f))
+            ui_row() {
+                ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
+                ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
                 ui_row() {
-                    ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
-                    ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-                    ui_row() {
-                        ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                        ui_label(property->name);
-                    }
+                    ui_width_next(ui_size_text_content(0.0f, 1.0f));
+                    ui_label(property->name);
+                }
 
-                    ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
-                    ui_extra_box_flags_next(UI_BoxFlag_DrawBorder);
-                    ui_row() {
-                        ui_width_next(ui_size_fill());
-                        // NOTE(simon): Create a button if we are a reference.
-                        if (!pipewire_object_is_nil(reference)) {
-                            ui_palette_next(palette_from_theme(ThemePalette_Button));
-                            object_button(reference);
-                        } else {
-                            ui_label(property->value);
-                        }
+                ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
+                ui_extra_box_flags_next(UI_BoxFlag_DrawBorder);
+                ui_row() {
+                    ui_width_next(ui_size_fill());
+                    // NOTE(simon): Create a button if we are a reference.
+                    if (!pipewire_object_is_nil(reference)) {
+                        ui_palette_next(palette_from_theme(ThemePalette_Button));
+                        object_button(reference);
+                    } else {
+                        ui_label(property->value);
                     }
                 }
             }
@@ -756,10 +726,26 @@ internal BUILD_TAB_FUNCTION(build_property_tab) {
 }
 
 internal BUILD_TAB_FUNCTION(build_parameter_tab) {
+    typedef struct Expansion Expansion;
+    struct Expansion {
+        Expansion *next;
+        Expansion *previous;
+
+        U64 hash;
+    };
+    typedef struct ExpansionList ExpansionList;
+    struct ExpansionList {
+        Expansion *first;
+        Expansion *last;
+    };
     typedef struct TabState TabState;
     struct TabState {
         UI_ScrollPosition scroll_position;
         F32 column_widths[3];
+
+        ExpansionList *expansion_table;
+        U64 expansion_table_size;
+        Expansion *expansion_freelist;
     };
 
     B32 is_new_tab = !tab_from_handle(top_context()->tab)->state;
@@ -769,6 +755,9 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
         tab_state->column_widths[0] = 1.0f / 3.0f;
         tab_state->column_widths[1] = 1.0f / 3.0f;
         tab_state->column_widths[2] = 1.0f / 3.0f;
+
+        tab_state->expansion_table_size = 512;
+        tab_state->expansion_table = arena_push_array(tab_from_handle(top_context()->tab)->arena, ExpansionList, tab_state->expansion_table_size);
     }
 
     Pipewire_Object *selected_object = pipewire_object_from_handle(state->selected_object);
@@ -781,6 +770,8 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
         Str8 value;
         Str8 type;
         U64  depth;
+        B32  is_expandable;
+        U64  hash;
     };
 
     Row *rows = 0;
@@ -789,41 +780,64 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
         typedef struct Work Work;
         struct Work {
             Work *next;
-            Str8 label;
-            U64 depth;
 
+            // NOTE(simon): Display data set by parent.
+            Str8 label;
+            U64  depth;
+
+            // NOTE(simon): Raw SPA data.
             Void *body;
+            U32   type;
+            U32   size;
             const struct spa_type_info *type_info;
-            U32    type;
-            U32    size;
+
+            // NOTE(simon): Unique hash for this item.
+            U64 hash;
         };
+
+        // NOTE(simon): Queue up all parameters.
         Work *first_work = 0;
         Work *last_work = 0;
         for (Pipewire_Parameter *parameter = selected_object->first_parameter; parameter; parameter = parameter->next) {
             Work *work = arena_push_struct(frame_arena(), Work);
             work->label = str8_cstr((CStr) spa_debug_type_find_short_name(spa_type_param, parameter->id));
             work->body = SPA_POD_BODY(parameter->param);
-            work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, parameter->param->type);
             work->type = parameter->param->type;
             work->size = parameter->param->size;
+            work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, parameter->param->type);
+            work->hash = u64_hash(parameter->id);
             sll_queue_push(first_work, last_work, work);
         }
 
+        // NOTE(simon): Generate one row for each work item and potentially
+        // generate more work for children.
         Row *first_row = 0;
         Row *last_row = 0;
         while (first_work) {
             Work *work = first_work;
             sll_queue_pop(first_work, last_work);
 
+            // NOTE(simon): Find expansion state.
+            Expansion *expanded = 0;
+            ExpansionList *expansion_list = &tab_state->expansion_table[work->hash % tab_state->expansion_table_size];
+            for (Expansion *expansion = expansion_list->first; expansion; expansion = expansion->next) {
+                if (expansion->hash == work->hash) {
+                    expanded = expansion;
+                    break;
+                }
+            }
+
+            // NOTE(simon): Work list to generate children.
             Work *first_member_work = 0;
             Work *last_member_work  = 0;
 
-            // NOTE(simon): Create the row.
+            // NOTE(simon): Create the row and fill with default data.
             Row *row = arena_push_struct(frame_arena(), Row);
             row->label = work->label;
             row->depth = work->depth;
-            row->type = str8_cstr((CStr) spa_debug_type_short_name(work->type_info->name));
+            row->type  = str8_cstr((CStr) spa_debug_type_short_name(work->type_info->name));
             row->value = str8_literal("???");
+            row->hash  = work->hash;
 
             // NOTE(simon): Fill out row and generate member work based on
             // type.
@@ -861,7 +875,7 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                         row->value = value;
                     } break;
                     case SPA_TYPE_Bytes: {
-                        row->value = str8_literal("[ ... ]");
+                        row->value = str8_literal("TODO: Not implemented yet");
                     } break;
                     case SPA_TYPE_Rectangle: {
                         struct spa_rectangle *value = (struct spa_rectangle *) work->body;
@@ -872,13 +886,15 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                         row->value = str8_format(frame_arena(), "%u / %u", value->num, value->denom);
                     } break;
                     case SPA_TYPE_Bitmap: {
-                        row->value = str8_literal("[ ... ]");
+                        row->value = str8_literal("TODO: Not implemented yet");
                     } break;
                     case SPA_TYPE_Array: {
                         struct spa_pod_array_body *value = (struct spa_pod_array_body *) work->body;
                         struct spa_type_info *child_type = (struct spa_type_info *) spa_debug_type_find(SPA_TYPE_ROOT, value->child.type);
                         row->value = str8_literal("[ ... ]");
+                        row->is_expandable = true;
 
+                        // NOTE(simon): Generate work for all children.
                         U64 index = 0;
                         Void *child = 0;
 #pragma clang diagnostic push
@@ -889,16 +905,19 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                             child_work->label = str8_format(frame_arena(), "[%lu]", index);
                             child_work->depth = work->depth + 1;
                             child_work->body = child;
-                            child_work->type_info = child_type;
                             child_work->type = value->child.type;
                             child_work->size = value->child.size;
+                            child_work->type_info = child_type;
+                            child_work->hash = hash_combine(work->hash, u64_hash(index));
                             sll_queue_push(first_member_work, last_member_work, child_work);
                             ++index;
                         }
                     } break;
                     case SPA_TYPE_Struct: {
                         row->value = str8_literal("[ ... ]");
+                        row->is_expandable = true;
 
+                        // NOTE(simon): Generate work for all children.
                         struct spa_pod *child = 0;
                         U64 index = 0;
                         SPA_POD_FOREACH(work->body, work->size, child) {
@@ -906,9 +925,10 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                             child_work->label = str8_format(frame_arena(), "%lu", index);
                             child_work->depth = work->depth + 1;
                             child_work->body = SPA_POD_BODY(child);
-                            child_work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, child->type);
                             child_work->type = child->type;
                             child_work->size = child->size;
+                            child_work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, child->type);
+                            child_work->hash = hash_combine(work->hash, u64_hash(index));
                             sll_queue_push(first_member_work, last_member_work, child_work);
                             ++index;
                         }
@@ -917,12 +937,18 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                         struct spa_pod_object_body *value = (struct spa_pod_object_body *) work->body;
                         const struct spa_type_info *type_info = spa_debug_type_find(SPA_TYPE_ROOT, value->type);
                         row->value = str8_literal("[ ... ]");
-                        row->type = str8_cstr((CStr) type_info->name);
+                        row->is_expandable = true;
+                        row->type = str8_cstr((CStr) spa_debug_type_short_name(type_info->name));
 
+                        // NOTE(simon): Generate work for all children.
                         struct spa_pod_prop *prop = 0;
+                        U64 index = 0;
                         SPA_POD_OBJECT_BODY_FOREACH(value, work->size, prop) {
                             struct spa_type_info *child_type = (struct spa_type_info *) spa_debug_type_find(type_info->values, prop->key);
                             Work *child_work = arena_push_struct(frame_arena(), Work);
+
+                            // NOTE(simon): Try to find the property name from
+                            // the type information.
                             if (child_type) {
                                 child_work->label = str8_cstr((CStr) spa_debug_type_short_name(child_type->name));
                             } else if (prop->key >= SPA_PROP_START_CUSTOM) {
@@ -930,29 +956,68 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                             } else {
                                 child_work->label = str8_literal("Unknown");
                             }
+
                             child_work->depth = work->depth + 1;
                             child_work->body = SPA_POD_CONTENTS(struct spa_pod_prop, prop);
-                            child_work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, prop->value.type);
                             child_work->type = prop->value.type;
                             child_work->size = prop->value.size;
+                            child_work->type_info = spa_debug_type_find(SPA_TYPE_ROOT, prop->value.type);
+                            child_work->hash = hash_combine(work->hash, u64_hash(index));
                             sll_queue_push(first_member_work, last_member_work, child_work);
+                            ++index;
                         }
                     } break;
                     case SPA_TYPE_Sequence: {
-                        struct spa_pod_choice_body *value = (struct spa_pod_choice_body *) work->body;
-                        row->value = str8_literal("[ ... ]");
+                        row->value = str8_literal("TODO: Not implemented yet");
                     } break;
                     case SPA_TYPE_Pointer: {
-                        row->value = str8_literal("[ ... ]");
+                        row->value = str8_literal("TODO: Not implemented yet");
                     } break;
                     case SPA_TYPE_Fd: {
-                        row->value = str8_literal("[ ... ]");
+                        row->value = str8_literal("TODO: Not implemented yet");
                     } break;
                     case SPA_TYPE_Choice: {
                         struct spa_pod_choice_body *value = (struct spa_pod_choice_body *) work->body;
                         struct spa_type_info *child_type = (struct spa_type_info *) spa_debug_type_find(SPA_TYPE_ROOT, value->child.type);
                         row->value = str8_literal("[ ... ]");
+                        row->is_expandable = true;
 
+                        Str8 range_labels[] = { str8_literal_compile("default"), str8_literal_compile("min"), str8_literal_compile("max"), };
+                        Str8 step_labels[]  = { str8_literal_compile("default"), str8_literal_compile("min"), str8_literal_compile("max"), str8_literal_compile("step"), };
+                        Str8 enum_labels[]  = { str8_literal_compile("default"), };
+
+                        Str8 *labels = 0;
+                        U64   label_count = 0;
+
+                        // NOTE(simon): Modify the type and set custom labels.
+                        switch (value->type) {
+                            case SPA_CHOICE_None: {
+                                row->type = str8_literal("Choice:None");
+                            } break;
+                            case SPA_CHOICE_Range: {
+                                labels = range_labels;
+                                label_count = array_count(range_labels);
+                                row->type = str8_literal("Choice:Range");
+                            } break;
+                            case SPA_CHOICE_Step: {
+                                labels = step_labels;
+                                label_count = array_count(step_labels);
+                                row->type = str8_literal("Choice:Step");
+                            } break;
+                            case SPA_CHOICE_Enum: {
+                                labels = enum_labels;
+                                label_count = array_count(enum_labels);
+                                row->type = str8_literal("Choice:Enum");
+                            } break;
+                            case SPA_CHOICE_Flags: {
+                                row->type = str8_literal("Choice:Flags");
+                            } break;
+                            default: {
+                                row->type = str8_literal("Choice:Unknown");
+                            } break;
+                        }
+
+                        // NOTE(simon): Generate work for all children.
                         U64 index = 0;
                         Void *child = 0;
 #pragma clang diagnostic push
@@ -960,18 +1025,25 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
                         SPA_POD_CHOICE_BODY_FOREACH(value, work->size, child) {
 #pragma clang diagnostic pop
                             Work *child_work = arena_push_struct(frame_arena(), Work);
-                            child_work->label = str8_format(frame_arena(), "%lu", index);
+                            if (index < label_count) {
+                                child_work->label = labels[index];
+                            } else {
+                                child_work->label = str8_format(frame_arena(), "%lu", index - label_count);
+                            }
                             child_work->depth = work->depth + 1;
                             child_work->body = child;
                             child_work->type_info = child_type;
                             child_work->type = value->child.type;
                             child_work->size = value->child.size;
+                            child_work->hash = hash_combine(work->hash, u64_hash(index));
                             sll_queue_push(first_member_work, last_member_work, child_work);
                             ++index;
                         }
 
                     } break;
-                    case SPA_TYPE_Pod: { } break;
+                    case SPA_TYPE_Pod: {
+                        row->value = str8_literal("TODO: Not implemented yet");
+                    } break;
                 }
             }
 
@@ -979,13 +1051,14 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
             sll_queue_push(first_row, last_row, row);
             ++row_count;
 
-            // NOTE(simon): Add members as new work.
-            if (first_member_work) {
+            // NOTE(simon): Add members as new work if we are expanded.
+            if (expanded && first_member_work) {
                 last_member_work->next = first_work;
                 first_work = first_member_work;
             }
         }
 
+        // NOTE(simon): Flatten generated rows to array.
         rows = arena_push_array(frame_arena(), Row, (U64) row_count);
         for (Row *row = first_row, *row_ptr = rows; row; row = row->next) {
             *row_ptr++ = *row;
@@ -995,121 +1068,138 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
     V2F32 tab_size   = r2f32_size(tab_rectangle);
     F32   row_height = 2.0f * (F32) ui_font_size_top();
 
-    ui_width(ui_size_pixels(tab_size.width, 1.0f))
-    ui_height(ui_size_pixels(tab_size.height, 1.0f))
-    ui_column()
-    ui_text_x_padding(5.0f) {
-        ui_height(ui_size_pixels(row_height, 1.0f))
-        ui_row()
-        ui_width(ui_size_text_content(0, 1.0f)) {
-            ui_label(kind_from_object(selected_object));
-            ui_spacer_sized(ui_size_ems(0.5f, 1.0f));
-            ui_label(name_from_object(selected_object));
+    R1S64 visible_range = { 0 };
+    ui_palette(palette_from_theme(ThemePalette_Button))
+    ui_font(font_cache_font_from_static_data(&mono_font))
+    ui_scroll_region(tab_size, row_height, row_count, &visible_range, 0, &tab_state->scroll_position)
+    ui_text_x_padding(5.0f)
+    ui_palette(palette_from_theme(ThemePalette_Base)) {
+        // NOTE(simon): Build column resize handles
+        F32 column_position = 0.0f;
+        F32 container_width = ui_parent_top()->size[Axis2_X].value;
+        ui_fixed_y(0.0f)
+        ui_width(ui_size_pixels(5.0f, 1.0f))
+        ui_height(ui_size_pixels(row_height * (F32) r1s64_size(visible_range), 1.0f))
+        ui_hover_cursor(Gfx_Cursor_SizeWE)
+        for (U32 i = 0; i < array_count(tab_state->column_widths) - 1; ++i) {
+            column_position += tab_state->column_widths[i];
+
+            ui_fixed_x_next(column_position * container_width);
+            UI_Box *handle = ui_create_box_from_string_format(UI_BoxFlag_Clickable, "###resize_handle_%u", i);
+            UI_Input input = ui_input_from_box(handle);
+
+            if (input.flags & UI_InputFlag_LeftDragging) {
+                if (input.flags & UI_InputFlag_LeftPressed) {
+                    F32 min_width = tab_state->column_widths[i + 0];
+                    F32 max_width = tab_state->column_widths[i + 1];
+                    V2F32 drag_data = v2f32(min_width, max_width);
+                    ui_set_drag_data(&drag_data);
+                }
+
+                V2F32 drag_data = *ui_get_drag_data(V2F32);
+
+                F32 min_width_percentage_pre_drag = drag_data.x;
+                F32 max_width_percentage_pre_drag = drag_data.y;
+                F32 min_width_pixels_pre_drag = container_width * min_width_percentage_pre_drag;
+                F32 max_width_pixels_pre_drag = container_width * max_width_percentage_pre_drag;
+
+                F32 drag_delta = ui_drag_delta().x;
+                F32 clamped_drag_delta = drag_delta;
+                if (drag_delta < 0.0f) {
+                    clamped_drag_delta = -f32_min(-drag_delta, min_width_pixels_pre_drag);
+                } else {
+                    clamped_drag_delta = f32_min(drag_delta, max_width_pixels_pre_drag);
+                }
+
+                F32 min_width_pixels_post_drag = min_width_pixels_pre_drag + clamped_drag_delta;
+                F32 max_width_pixels_post_drag = max_width_pixels_pre_drag - clamped_drag_delta;
+                F32 min_width_percentage_post_drag = min_width_pixels_post_drag / container_width;
+                F32 max_width_percentage_post_drag = max_width_pixels_post_drag / container_width;
+                tab_state->column_widths[i + 0] = min_width_percentage_post_drag;
+                tab_state->column_widths[i + 1] = max_width_percentage_post_drag;
+            }
         }
 
-        ui_width(ui_size_pixels(tab_size.x - (F32) ui_font_size_top(), 1.0f))
-        ui_height(ui_size_pixels(row_height, 1.0f))
-        ui_row() {
-            ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
-            ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-            ui_row() {
-                ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                ui_label(str8_literal("Member"));
-            }
+        // NOTE(simon): Build rows.
+        for (S64 i = visible_range.min; i < visible_range.max; ++i) {
+            Row *row = &rows[i];
 
-            ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
-            ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-            ui_row() {
-                ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                ui_label(str8_literal("Value"));
-            }
-
-            ui_width_next(ui_size_parent_percent(tab_state->column_widths[2], 1.0f));
-            ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-            ui_row() {
-                ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                ui_label(str8_literal("Type"));
-            }
-        }
-
-
-        R1S64 visible_range = { 0 };
-        ui_palette(palette_from_theme(ThemePalette_Button))
-        ui_font(font_cache_font_from_static_data(&mono_font))
-        ui_scroll_region(v2f32(tab_size.x, tab_size.y - 2.0f * row_height), row_height, row_count, &visible_range, 0, &tab_state->scroll_position)
-        ui_palette(palette_from_theme(ThemePalette_Base)) {
-            // NOTE(simon): Build column resize handles
-            F32 column_position = 0.0f;
-            F32 container_width = ui_parent_top()->size[Axis2_X].value;
-            ui_fixed_y(0.0f)
-            ui_width(ui_size_pixels(5.0f, 1.0f))
-            ui_height(ui_size_pixels(row_height * (F32) r1s64_size(visible_range), 1.0f))
-            ui_hover_cursor(Gfx_Cursor_SizeWE)
-            for (U32 i = 0; i < array_count(tab_state->column_widths) - 1; ++i) {
-                column_position += tab_state->column_widths[i];
-
-                ui_fixed_x_next(column_position * container_width);
-                UI_Box *handle = ui_create_box_from_string_format(UI_BoxFlag_Clickable, "###resize_handle_%u", i);
-                UI_Input input = ui_input_from_box(handle);
-
-                if (input.flags & UI_InputFlag_LeftDragging) {
-                    if (input.flags & UI_InputFlag_LeftPressed) {
-                        F32 min_width = tab_state->column_widths[i + 0];
-                        F32 max_width = tab_state->column_widths[i + 1];
-                        V2F32 drag_data = v2f32(min_width, max_width);
-                        ui_set_drag_data(&drag_data);
-                    }
-
-                    V2F32 drag_data = *ui_get_drag_data(V2F32);
-
-                    F32 min_width_percentage_pre_drag = drag_data.x;
-                    F32 max_width_percentage_pre_drag = drag_data.y;
-                    F32 min_width_pixels_pre_drag = container_width * min_width_percentage_pre_drag;
-                    F32 max_width_pixels_pre_drag = container_width * max_width_percentage_pre_drag;
-
-                    F32 drag_delta = ui_drag_delta().x;
-                    F32 clamped_drag_delta = drag_delta;
-                    if (drag_delta < 0.0f) {
-                        clamped_drag_delta = -f32_min(-drag_delta, min_width_pixels_pre_drag);
-                    } else {
-                        clamped_drag_delta = f32_min(drag_delta, max_width_pixels_pre_drag);
-                    }
-
-                    F32 min_width_pixels_post_drag = min_width_pixels_pre_drag + clamped_drag_delta;
-                    F32 max_width_pixels_post_drag = max_width_pixels_pre_drag - clamped_drag_delta;
-                    F32 min_width_percentage_post_drag = min_width_pixels_post_drag / container_width;
-                    F32 max_width_percentage_post_drag = max_width_pixels_post_drag / container_width;
-                    tab_state->column_widths[i + 0] = min_width_percentage_post_drag;
-                    tab_state->column_widths[i + 1] = max_width_percentage_post_drag;
+            // NOTE(simon): Find expansion state.
+            Expansion *expanded = 0;
+            ExpansionList *expansion_list = &tab_state->expansion_table[row->hash % tab_state->expansion_table_size];
+            for (Expansion *expansion = expansion_list->first; expansion; expansion = expansion->next) {
+                if (expansion->hash == row->hash) {
+                    expanded = expansion;
+                    break;
                 }
             }
 
-            // NOTE(simon): Build rows.
-            for (S64 i = visible_range.min; i < visible_range.max; ++i) {
-                Row *row = &rows[i];
-                ui_width_next(ui_size_fill());
+            ui_width_next(ui_size_fill());
+            ui_row() {
+                // NOTE(simon): Build label.
+                ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
+                ui_layout_axis_next(Axis2_X);
+                ui_hover_cursor_next(Gfx_Cursor_Hand);
+                UI_Box *label_box = ui_create_box_from_string_format(
+                    UI_BoxFlag_DrawBorder | UI_BoxFlag_Clip |
+                    (row->is_expandable ? UI_BoxFlag_Clickable : 0),
+                    "###paramter_%lu", row->hash
+                );
+                ui_parent(label_box) {
+                    // NOTE(simon): Indentation due to nesting depth.
+                    ui_spacer_sized(ui_size_ems((F32) row->depth, 1.0f));
+
+                    // NOTE(simon): Expansion button or spacer depending on
+                    // if we are expandable or not.
+                    ui_width_next(ui_size_ems(1.5f, 1.0f));
+                    ui_text_align_next(UI_TextAlign_Center);
+                    ui_font_next(ui_icon_font());
+                    if (row->is_expandable) {
+                        ui_label(ui_icon_string_from_kind(expanded ? UI_IconKind_DownAngle : UI_IconKind_RightAngle));
+                    } else {
+                        ui_spacer();
+                    }
+
+                    ui_width_next(ui_size_text_content(0.0f, 1.0f));
+                    ui_label(row->label);
+                }
+
+                UI_Input label_input = ui_input_from_box(label_box);
+
+                // NOTE(simon): Handle expansion.
+                if (row->is_expandable) {
+                    if (label_input.flags & UI_InputFlag_Clicked) {
+                        if (expanded) {
+                            dll_remove(expansion_list->first, expansion_list->last, expanded);
+                            sll_stack_push(tab_state->expansion_freelist, expanded);
+                        } else {
+                            expanded = tab_state->expansion_freelist;
+                            if (expanded) {
+                                sll_stack_pop(tab_state->expansion_freelist);
+                                memory_zero_struct(expanded);
+                            } else {
+                                expanded = arena_push_struct(tab_from_handle(top_context()->tab)->arena, Expansion);
+                            }
+                            expanded->hash = row->hash;
+                            dll_push_back(expansion_list->first, expansion_list->last, expanded);
+                        }
+                    }
+                }
+
+                // NOTE(simon): Build value.
+                ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
+                ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
                 ui_row() {
-                    ui_width_next(ui_size_parent_percent(tab_state->column_widths[0], 1.0f));
-                    ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-                    ui_row() {
-                        ui_spacer_sized(ui_size_ems((F32) row->depth, 1.0f));
-                        ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                        ui_label(row->label);
-                    }
+                    ui_width_next(ui_size_text_content(0.0f, 1.0f));
+                    ui_label(row->value);
+                }
 
-                    ui_width_next(ui_size_parent_percent(tab_state->column_widths[1], 1.0f));
-                    ui_extra_box_flags_next(UI_BoxFlag_Clip | UI_BoxFlag_DrawBorder);
-                    ui_row() {
-                        ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                        ui_label(row->value);
-                    }
-
-                    ui_width_next(ui_size_parent_percent(tab_state->column_widths[2], 1.0f));
-                    ui_extra_box_flags_next(UI_BoxFlag_DrawBorder);
-                    ui_row() {
-                        ui_width_next(ui_size_text_content(0.0f, 1.0f));
-                        ui_label(row->type);
-                    }
+                // NOTE(simon): Build type.
+                ui_width_next(ui_size_parent_percent(tab_state->column_widths[2], 1.0f));
+                ui_extra_box_flags_next(UI_BoxFlag_DrawBorder);
+                ui_row() {
+                    ui_width_next(ui_size_text_content(0.0f, 1.0f));
+                    ui_label(row->type);
                 }
             }
         }
