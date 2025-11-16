@@ -1245,14 +1245,16 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
         }
     }
 
-    V2F32 tab_size   = r2f32_size(tab_rectangle);
-    F32   row_height = 2.0f * (F32) ui_font_size_top();
+    V2F32 tab_size    = r2f32_size(tab_rectangle);
+    F32   row_height  = 2.0f * (F32) ui_font_size_top();
+    F32   port_radius = ui_size_ems(0.5f, 1.0f).value;
 
     // NOTE(simon): Build graph.
     ui_width_next(ui_size_pixels(tab_size.width, 1.0f));
     ui_height_next(ui_size_pixels(tab_size.height, 1.0f));
     UI_Box *node_graph_box = ui_create_box_from_string(UI_BoxFlag_Clip | UI_BoxFlag_Clickable | UI_BoxFlag_Scrollable, str8_literal("###node_graph"));
-    ui_text_x_padding(5.0f)
+    ui_text_x_padding(5.0f + port_radius)
+    ui_palette(palette_from_theme(ThemePalette_Button))
     ui_parent(node_graph_box) {
         V2F32 no_ports_offset     = v2f32(0.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
         V2F32 only_output_offset  = v2f32(1.0f * 20.0f * (F32) ui_font_size_top(), 0.0f);
@@ -1263,7 +1265,7 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
         struct PortNode {
             PortNode        *next;
             PortNode        *previous;
-            UI_Box          *box;
+            V2F32            position;
             Pipewire_Object *port;
         };
         PortNode *first_port = 0;
@@ -1353,7 +1355,7 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
             ui_width_next(ui_size_pixels(node_width, 1.0f));
             ui_height_next(ui_size_pixels(node_height, 1.0f));
             ui_layout_axis_next(Axis2_Y);
-            UI_Box *node_box = ui_create_box_from_string_format(UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clickable, "###node_%u", node->id);
+            UI_Box *node_box = ui_create_box_from_string_format(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawDropShadow | UI_BoxFlag_Clickable, "###node_%u", node->id);
             ui_parent(node_box)
             ui_width(ui_size_fill())
             ui_height(ui_size_pixels(row_height, 1.0f)) {
@@ -1374,6 +1376,8 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                 }
 
                 // NOTE(simon): Build ports.
+                U32 input_port_index = 0;
+                U32 output_port_index = 0;
                 for (Pipewire_Object *child = node->first; !pipewire_object_is_nil(child); child = child->next) {
                     PortNode *port_node = arena_push_struct(frame_arena(), PortNode);
                     port_node->port = child;
@@ -1381,19 +1385,41 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                     Str8 direction = pipewire_object_property_string_from_name(child, str8_literal("port.direction"));
                     Str8 port_name = pipewire_object_property_string_from_name(child, str8_literal("port.name"));
 
-                    UI_Input input = { 0 };
+                    V2F32 local_position = { 0 };
+                    local_position.y = 0.5f * row_height;
+                    U32 port_index = 0;
                     if (str8_equal(direction, str8_literal("in"))) {
                         ui_parent_next(input_column);
                         ui_text_align_next(UI_TextAlign_Left);
-                        input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
+                        local_position.x = 0.0f;
+                        port_index = input_port_index++;
                     } else if (str8_equal(direction, str8_literal("out"))) {
                         ui_parent_next(output_column);
                         ui_text_align_next(UI_TextAlign_Right);
-                        input = ui_button_format("%.*s###port_%p", str8_expand(port_name), child);
+                        local_position.x = output_port_name_max_width;
+                        port_index = output_port_index++;
+                    }
+                    port_node->position = v2f32(
+                        graph_node->position.x + local_position.x,
+                        graph_node->position.y + local_position.y + (F32) (1 + port_index) * row_height
+                    );
+                    UI_Box *label = ui_label(port_name);
+
+                    UI_Input port_input = { 0 };
+                    ui_parent(label) {
+                        UI_Palette palette = { 0 };
+                        palette.background = color_from_theme(ThemeColor_Text);
+                        ui_palette_next(palette);
+                        ui_fixed_x_next(local_position.x - port_radius);
+                        ui_fixed_y_next(local_position.y - port_radius);
+                        ui_width_next(ui_size_pixels(2.0f * port_radius, 1.0f));
+                        ui_height_next(ui_size_pixels(2.0f * port_radius, 1.0f));
+                        ui_corner_radius_next(port_radius);
+                        UI_Box *port = ui_create_box_from_string_format(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawHot | UI_BoxFlag_DrawActive | UI_BoxFlag_Clickable, "###port_%p", child);
+                        port_input = ui_input_from_box(port);
                     }
 
-                    port_node->box = input.box;
-                    if (input.flags & UI_InputFlag_Clicked) {
+                    if (port_input.flags & UI_InputFlag_Clicked) {
                         if (!pipewire_object_is_nil(pipewire_object_from_handle(state->selected_port))) {
                             pipewire_link(state->selected_port, pipewire_handle_from_object(child));
                             state->selected_port = pipewire_handle_from_object(&pipewire_nil_object);
@@ -1402,9 +1428,7 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                         }
                     }
 
-                    if (port_node->box) {
-                        dll_push_back(first_port, last_port, port_node);
-                    }
+                    dll_push_back(first_port, last_port, port_node);
                 }
             }
 
@@ -1437,25 +1461,23 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
             }
 
             // NOTE(simon): Find input and output ports.
-            PortNode *output_node = 0;
-            PortNode *input_node  = 0;
+            PortNode *output_port = 0;
+            PortNode *input_port  = 0;
             U32 output_port_id = pipewire_object_property_u32_from_name(node, str8_literal("link.output.port"));
             U32 input_port_id  = pipewire_object_property_u32_from_name(node, str8_literal("link.input.port"));
             for (PortNode *port_node = first_port; port_node; port_node = port_node->next) {
                 if (port_node->port->id == output_port_id) {
-                    output_node = port_node;
+                    output_port = port_node;
                 } else if (port_node->port->id == input_port_id) {
-                    input_node = port_node;
+                    input_port = port_node;
                 }
             }
 
             // NOTE(simon): Draw two quadratic beziers to approximmate the
             // look of a cubic beizer between ports.
-            if (output_node && input_node) {
-                R2F32 absolute_output_rectangle = output_node->box->calculated_rectangle;
-                R2F32 absolute_input_rectangle  = input_node->box->calculated_rectangle;
-                V2F32 output_point = v2f32_subtract(v2f32(absolute_output_rectangle.max.x, 0.5f * (absolute_output_rectangle.min.y + absolute_output_rectangle.max.y)), node_graph_box->calculated_rectangle.min);
-                V2F32 input_point  = v2f32_subtract(v2f32(absolute_input_rectangle.min.x,  0.5f * (absolute_input_rectangle.min.y  + absolute_input_rectangle.max.y)),  node_graph_box->calculated_rectangle.min);
+            if (output_port && input_port) {
+                V2F32 output_point = v2f32_subtract(output_port->position, tab_state->graph_offset);
+                V2F32 input_point  = v2f32_subtract(input_port->position, tab_state->graph_offset);
                 V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
                 V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
                 V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
