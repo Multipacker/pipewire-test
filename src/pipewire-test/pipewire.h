@@ -9,6 +9,7 @@
 #include <spa/param/format-utils.h>
 #include <spa/utils/result.h>
 #include <spa/debug/pod.h>
+#include <spa/pod/builder.h>
 #include <pipewire/pipewire.h>
 #pragma clang diagnostic pop
 #define global static
@@ -49,6 +50,7 @@ struct Pipewire_Parameter {
     Pipewire_Parameter *next;
     Pipewire_Parameter *previous;
     U32 id;
+    S32 sequence;
     struct spa_pod *param;
 };
 
@@ -142,7 +144,7 @@ internal Str8               pipewire_object_property_string_from_name(Pipewire_O
 internal U32                pipewire_object_property_u32_from_name(Pipewire_Object *object, Str8 name);
 
 internal B32                 pipewire_parameter_is_nil(Pipewire_Parameter *parameter);
-internal Void                pipewire_object_update_parameter(Pipewire_Object *object, U32 id, struct spa_pod *param);
+internal Void                pipewire_object_update_parameter(Pipewire_Object *object, S32 sequence, U32 id, struct spa_pod *param);
 internal Pipewire_Parameter *pipewire_object_parameter_from_id(Pipewire_Object *object, U32 id);
 
 internal U64             pipewire_chunk_index_from_size(U64 size);
