@@ -1206,6 +1206,36 @@ internal BUILD_TAB_FUNCTION(build_parameter_tab) {
     }
 }
 
+internal V4F32 color_from_port_media_type(Pipewire_Object *object) {
+    V4F32 port_color = v4f32(1.0f, 1.0f, 1.0f, 1.0f);
+
+    if (object->kind == Pipewire_Object_Port) {
+        struct spa_pod *format_parameter = pipewire_object_parameter_from_id(object, SPA_PARAM_Format)->param;
+        if (!format_parameter) {
+            // NOTE(simon): This assumes that a port cannot support multiple
+            // differnet media types, only different subtypes.
+            format_parameter = pipewire_object_parameter_from_id(object, SPA_PARAM_EnumFormat)->param;
+        }
+
+        if (format_parameter) {
+            const struct spa_pod_prop *media_type_property = spa_pod_find_prop(format_parameter, 0, SPA_FORMAT_mediaType);
+            U32 media_type = 0;
+            if (media_type_property && spa_pod_get_id(&media_type_property->value, &media_type) >= 0) {
+                switch (media_type) {
+                    case SPA_MEDIA_TYPE_unknown:     port_color = color_from_theme(ThemeColor_PortUnknown);     break;
+                    case SPA_MEDIA_TYPE_audio:       port_color = color_from_theme(ThemeColor_PortAudio);       break;
+                    case SPA_MEDIA_TYPE_video:       port_color = color_from_theme(ThemeColor_PortVideo);       break;
+                    case SPA_MEDIA_TYPE_image:       port_color = color_from_theme(ThemeColor_PortImage);       break;
+                    case SPA_MEDIA_TYPE_binary:      port_color = color_from_theme(ThemeColor_PortBinary);      break;
+                    case SPA_MEDIA_TYPE_stream:      port_color = color_from_theme(ThemeColor_PortStream);      break;
+                    case SPA_MEDIA_TYPE_application: port_color = color_from_theme(ThemeColor_PortApplication); break;
+                }
+            }
+        }
+    }
+    return port_color;
+}
+
 internal BUILD_TAB_FUNCTION(build_graph_tab) {
     typedef struct GraphNode GraphNode;
     struct GraphNode {
@@ -1412,7 +1442,7 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                     UI_Input port_input = { 0 };
                     ui_parent(label) {
                         UI_Palette palette = { 0 };
-                        palette.background = color_from_theme(ThemeColor_Text);
+                        palette.background = color_from_port_media_type(child);
                         ui_palette_next(palette);
                         ui_fixed_x_next(local_position.x - port_radius);
                         ui_fixed_y_next(local_position.y - port_radius);
@@ -1515,13 +1545,14 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
             // NOTE(simon): Draw two quadratic beziers to approximmate the
             // look of a cubic beizer between ports.
             if (output_port && input_port) {
+                V4F32 link_color = color_from_port_media_type(output_port->port);
                 V2F32 output_point = v2f32_subtract(output_port->position, tab_state->graph_offset);
                 V2F32 input_point  = v2f32_subtract(input_port->position, tab_state->graph_offset);
                 V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
                 V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
                 V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
-                draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
-                draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+                draw_bezier(output_point, c0_control, middle,      link_color, 2.0f, 1.0f, 1.0f);
+                draw_bezier(middle,       c1_control, input_point, link_color, 2.0f, 1.0f, 1.0f);
             }
         }
         if (drag_is_active() && state->drag_context_member == ContextMember_Port) {
@@ -1539,6 +1570,7 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                 // NOTE(simon): Draw two quadratic beziers to approximmate the
                 // look of a cubic beizer between ports.
                 if (node) {
+                    V4F32 link_color = color_from_port_media_type(port);
                     V2F32 output_point = v2f32_subtract(node->position, tab_state->graph_offset);
                     V2F32 input_point  = v2f32_subtract(ui_mouse(), tab_rectangle.min);
 
@@ -1550,8 +1582,8 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                     V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
                     V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
                     V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
-                    draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
-                    draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+                    draw_bezier(output_point, c0_control, middle,      link_color, 2.0f, 1.0f, 1.0f);
+                    draw_bezier(middle,       c1_control, input_point, link_color, 2.0f, 1.0f, 1.0f);
                 }
             }
         }

@@ -57,7 +57,14 @@ global Str8 icon_kind_text[] = {
     X(ButtonBackground,          button_background,           "Button background")           \
     X(ButtonBorder,              button_border,               "Button border")               \
     X(SecondaryButtonBackground, secondary_button_background, "Secondary button background") \
-    X(SecondaryButtonBorder,     secondary_button_border,     "Secondary button border")
+    X(SecondaryButtonBorder,     secondary_button_border,     "Secondary button border")     \
+    X(PortUnknown,               port_unknown,                "Unknown port")                \
+    X(PortAudio,                 port_audio,                  "Audio port")                  \
+    X(PortVideo,                 port_video,                  "Video port")                  \
+    X(PortImage,                 port_image,                  "Image port")                  \
+    X(PortBinary,                port_binary,                 "Binary port")                 \
+    X(PortStream,                port_stream,                 "Stream port")                 \
+    X(PortApplication,           port_application,            "Application port")
 
 #define X(name, snake_name, display_name) ThemeColor_##name,
 typedef enum {

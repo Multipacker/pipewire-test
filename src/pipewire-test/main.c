@@ -53,7 +53,25 @@ internal S32 os_run(Str8List arguments) {
 
         V4F32 red6 = color_from_srgba_u32(0xfa5252ff);
 
+        V4F32 pink6 = color_from_srgba_u32(0xe64980ff);
+
+        V4F32 grape6 = color_from_srgba_u32(0xbe4bdbff);
+
+        V4F32 violet6 = color_from_srgba_u32(0x7950f2ff);
+
+        V4F32 indigo6 = color_from_srgba_u32(0x4c6ef5ff);
+
+        V4F32 blue6 = color_from_srgba_u32(0x228be6ff);
+
+        V4F32 cyan6 = color_from_srgba_u32(0x15aabfff);
+
+        V4F32 teal6 = color_from_srgba_u32(0x12b886ff);
+
         V4F32 green6 = color_from_srgba_u32(0x40c057ff);
+
+        V4F32 lime6 = color_from_srgba_u32(0x82c91eff);
+
+        V4F32 yellow6 = color_from_srgba_u32(0xfab005ff);
 
         V4F32 orange4 = color_from_srgba_u32(0xffa94dff);
 
@@ -85,6 +103,14 @@ internal S32 os_run(Str8List arguments) {
         theme->button_border           = gray7;
         theme->secondary_button_background = gray7;
         theme->secondary_button_border     = gray6;
+
+        theme->port_unknown     = gray0;
+        theme->port_audio       = blue6;
+        theme->port_video       = yellow6;
+        theme->port_image       = green6;
+        theme->port_binary      = grape6;
+        theme->port_stream      = red6;
+        theme->port_application = pink6;
     }
 
     Log *log = log_create();
