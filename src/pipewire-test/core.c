@@ -1393,16 +1393,20 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                         ui_text_align_next(UI_TextAlign_Left);
                         local_position.x = 0.0f;
                         port_index = input_port_index++;
+                        port_node->position = v2f32(
+                            graph_node->position.x + 0.0f,
+                            graph_node->position.y + local_position.y + (F32) (1 + port_index) * row_height
+                        );
                     } else if (str8_equal(direction, str8_literal("out"))) {
                         ui_parent_next(output_column);
                         ui_text_align_next(UI_TextAlign_Right);
                         local_position.x = output_port_name_max_width;
                         port_index = output_port_index++;
+                        port_node->position = v2f32(
+                            graph_node->position.x + node_width,
+                            graph_node->position.y + local_position.y + (F32) (1 + port_index) * row_height
+                        );
                     }
-                    port_node->position = v2f32(
-                        graph_node->position.x + local_position.x,
-                        graph_node->position.y + local_position.y + (F32) (1 + port_index) * row_height
-                    );
                     UI_Box *label = ui_label(port_name);
 
                     UI_Input port_input = { 0 };
@@ -1415,16 +1419,51 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                         ui_width_next(ui_size_pixels(2.0f * port_radius, 1.0f));
                         ui_height_next(ui_size_pixels(2.0f * port_radius, 1.0f));
                         ui_corner_radius_next(port_radius);
-                        UI_Box *port = ui_create_box_from_string_format(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawHot | UI_BoxFlag_DrawActive | UI_BoxFlag_Clickable, "###port_%p", child);
+                        UI_Box *port = ui_create_box_from_string_format(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawHot | UI_BoxFlag_DrawActive | UI_BoxFlag_Clickable | UI_BoxFlag_DropTarget, "###port_%p", child);
                         port_input = ui_input_from_box(port);
                     }
 
-                    if (port_input.flags & UI_InputFlag_Clicked) {
-                        if (!pipewire_object_is_nil(pipewire_object_from_handle(state->selected_port))) {
-                            pipewire_link(state->selected_port, pipewire_handle_from_object(child));
-                            state->selected_port = pipewire_handle_from_object(&pipewire_nil_object);
-                        } else {
-                            state->selected_port = pipewire_handle_from_object(child);
+                    if (port_input.flags & UI_InputFlag_Dragging && v2f32_length(ui_drag_delta()) > 10.0f) {
+                        context_scope(.port = pipewire_handle_from_object(child)) {
+                            drag_begin(ContextMember_Port);
+                        }
+                    }
+
+                    if (drag_is_active() && state->drag_context_member == ContextMember_Port && ui_drop_hot_key() == port_input.box->key) {
+                        if (drag_drop()) {
+                            Pipewire_Object *output_port = pipewire_object_from_handle(state->drag_context->port);
+                            Pipewire_Object *input_port  = child;
+
+                            Str8 output_direction = pipewire_object_property_string_from_name(output_port, str8_literal("port.direction"));
+                            Str8 input_direction  = pipewire_object_property_string_from_name(input_port,  str8_literal("port.direction"));
+
+                            if (str8_equal(input_direction, str8_literal("out"))) {
+                                swap(input_port,      output_port,      Pipewire_Object *);
+                                swap(input_direction, output_direction, Str8);
+                            }
+
+                            Pipewire_Object *existing_link = &pipewire_nil_object;
+                            for (S64 j = 0; j < object_count; ++j) {
+                                Pipewire_Object *link = objects[j];
+                                if (link->kind != Pipewire_Object_Link) {
+                                    continue;
+                                }
+
+                                U32 output_port_id = pipewire_object_property_u32_from_name(link, str8_literal("link.output.port"));
+                                U32 input_port_id  = pipewire_object_property_u32_from_name(link, str8_literal("link.input.port"));
+
+                                if (output_port_id == output_port->id && input_port_id == input_port->id) {
+                                    existing_link = link;
+                                }
+                            }
+
+                            if (str8_equal(output_direction, str8_literal("out")) && str8_equal(input_direction, str8_literal("in"))) {
+                                if (!pipewire_object_is_nil(existing_link)) {
+                                    pipewire_remove(pipewire_handle_from_object(existing_link));
+                                } else {
+                                    pipewire_link(pipewire_handle_from_object(output_port), pipewire_handle_from_object(input_port));
+                                }
+                            }
                         }
                     }
 
@@ -1483,6 +1522,37 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                 V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
                 draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
                 draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+            }
+        }
+        if (drag_is_active() && state->drag_context_member == ContextMember_Port) {
+            draw_list_scope(connections) {
+                Pipewire_Object *port = pipewire_object_from_handle(state->drag_context->port);
+
+                // NOTE(simon): Find port node.
+                PortNode *node = 0;
+                for (PortNode *port_node = first_port; port_node; port_node = port_node->next) {
+                    if (port_node->port->id == port->id) {
+                        node = port_node;
+                    }
+                }
+
+                // NOTE(simon): Draw two quadratic beziers to approximmate the
+                // look of a cubic beizer between ports.
+                if (node) {
+                    V2F32 output_point = v2f32_subtract(node->position, tab_state->graph_offset);
+                    V2F32 input_point  = v2f32_subtract(ui_mouse(), tab_rectangle.min);
+
+                    Str8 direction = pipewire_object_property_string_from_name(port, str8_literal("port.direction"));
+                    if (str8_equal(direction, str8_literal("in"))) {
+                        swap(output_point, input_point, V2F32);
+                    }
+
+                    V2F32 middle       = v2f32_scale(v2f32_add(input_point, output_point), 0.5f);
+                    V2F32 c0_control   = v2f32(output_point.x + f32_abs(input_point.x - output_point.x) * 0.25f, output_point.y);
+                    V2F32 c1_control   = v2f32(input_point.x  - f32_abs(input_point.x - output_point.x) * 0.25f, input_point.y);
+                    draw_bezier(output_point, c0_control, middle,      color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+                    draw_bezier(middle,       c1_control, input_point, color_from_theme(ThemeColor_Text), 2.0f, 1.0f, 1.0f);
+                }
             }
         }
         ui_box_set_draw_list(node_graph_box, connections);

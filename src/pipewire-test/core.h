@@ -195,14 +195,15 @@ global Window nil_window = {
     .root_panel = &nil_panel,
 };
 
-#define CONTEXT_MEMBERS(X)                               \
-    X(Handle,     tab,                Tab)               \
-    X(Handle,     panel,              Panel)             \
-    X(Handle,     window,             Window)            \
-    X(Handle,     previous_tab,       PreviousTab)       \
-    X(Handle,     destination_panel,  DestinationPanel)  \
-    X(Handle,     destination_window, DestinationWindow) \
-    X(Direction2, direction,          Direction)
+#define CONTEXT_MEMBERS(X)                                    \
+    X(Handle,          tab,                Tab)               \
+    X(Handle,          panel,              Panel)             \
+    X(Handle,          window,             Window)            \
+    X(Handle,          previous_tab,       PreviousTab)       \
+    X(Handle,          destination_panel,  DestinationPanel)  \
+    X(Handle,          destination_window, DestinationWindow) \
+    X(Direction2,      direction,          Direction)         \
+    X(Pipewire_Handle, port,               Port)
 
 typedef enum {
     ContextMember_Null,

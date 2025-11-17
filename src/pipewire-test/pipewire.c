@@ -397,6 +397,13 @@ internal Void pipewire_link(Pipewire_Handle output_handle, Pipewire_Handle input
     pw_properties_free(properties);
 }
 
+internal Void pipewire_remove(Pipewire_Handle handle) {
+    Pipewire_Object *object = pipewire_object_from_handle(handle);
+    if (!pipewire_object_is_nil(object)) {
+        pw_registry_destroy(pipewire_state->registry, object->id);
+    }
+}
+
 
 
 internal Void pipewire_module_info(Void *data, const struct pw_module_info *info) {
