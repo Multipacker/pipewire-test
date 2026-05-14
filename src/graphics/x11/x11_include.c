@@ -222,7 +222,7 @@ internal Void gfx_init(Void) {
     state->connection = xcb_connect(0, &state->screen_index);
     if (!state->connection) {
         gfx_message(true, str8_literal("Failed to initialize X11"), str8_literal("Could not connect to the X server."));
-        os_exit(1);
+        exit_self(1);
     }
 
     const xcb_setup_t *setup = xcb_get_setup(state->connection);
@@ -288,11 +288,11 @@ if (name##_reply) {                                                             
     xcb_sync_initialize_reply_t *sync_reply = xcb_sync_initialize_reply(state->connection, sync_cookie, 0);
     if (!sync_reply) {
         gfx_message(true, str8_literal("Failed to initialize X11"), str8_literal("Could not initialize Xsync extension."));
-        os_exit(1);
+        exit_self(1);
     }
     if (sync_reply->major_version != 3 && sync_reply->minor_version != 1) {
         gfx_message(true, str8_literal("Failed to initialize X11"), str8_literal("Incompatible version of Xsync extension."));
-        os_exit(1);
+        exit_self(1);
     }
 
     xkb_x11_setup_xkb_extension(
@@ -822,13 +822,13 @@ internal Gfx_EventList gfx_get_events(Arena *arena, B32 wait) {
                         data      = str8((U8 *) targets, array_count(targets));
                     } else if (request->property != XCB_ATOM_NONE && request->target == state->multiple_atom) {
                         // TODO(simon): Implement this when I have something that requires it. Hard to test otherwise
-                        os_console_print(str8_literal("XCB: Selection requests with multiple targets is not implemented yet.\n"));
+                        console_print(str8_literal("XCB: Selection requests with multiple targets is not implemented yet.\n"));
                         assert(false);
                     } else if (request->target == state->timestamp_atom) {
                         // TODO(simon): Implement this when I have a good way
                         // to acquire timestamps when we become the owner of
                         // the selection.
-                        os_console_print(str8_literal("XCB: Selection requests with timestamp target is not implemented yet.\n"));
+                        console_print(str8_literal("XCB: Selection requests with timestamp target is not implemented yet.\n"));
                         assert(false);
                     } else if (request->target == state->utf8_string_atom) {
                         type_atom = state->utf8_string_atom;
@@ -1267,7 +1267,7 @@ internal Str8 gfx_get_clipboard_text(Arena *arena) {
 
         // NOTE(simon): Poll events until we either complete the copy or have
         // gone more than a set amount of time between two copy events.
-        for (U64 start_time = os_now_nanoseconds(); os_now_nanoseconds() - start_time < 1000000000 && !done;) {
+        for (U64 start_time = time_now_nanoseconds(); time_now_nanoseconds() - start_time < 1000000000 && !done;) {
             xcb_generic_event_t *xcb_event = xcb_poll_for_event(state->connection);
             if (!xcb_event) {
                 continue;
@@ -1350,7 +1350,7 @@ internal Str8 gfx_get_clipboard_text(Arena *arena) {
             }
 
             if (consumed) {
-                start_time = os_now_nanoseconds();
+                start_time = time_now_nanoseconds();
                 free(xcb_event);
             } else {
                 // NOTE(simon): Save the event for the next time someone calls

@@ -3,9 +3,9 @@ thread_local Arena *thread_scratch_arenas[THREAD_SCRATCH_ARENA_POOL_SIZE];
 
 internal Arena *arena_create_reserve(U64 reserve_size) {
     U64 capped_reserve_size = u64_max(u64_ceil_to_power_of_2(reserve_size), ARENA_COMMIT_BLOCK_SIZE);
-    U8 *memory              = os_memory_reserve(capped_reserve_size);
+    U8 *memory              = memory_reserve(capped_reserve_size);
     U64 initial_commit      = u64_max(u64_ceil_to_power_of_2(sizeof(Arena)), ARENA_COMMIT_BLOCK_SIZE);
-    os_memory_commit(memory, initial_commit);
+    memory_commit(memory, initial_commit);
 
     Arena *result = (Arena *) memory;
 
@@ -24,7 +24,7 @@ internal Arena *arena_create(Void) {
 }
 
 internal Void arena_destroy(Arena *arena) {
-    os_memory_release(arena->memory, arena->capacity);
+    memory_release(arena->memory, arena->capacity);
 }
 
 internal Void *arena_push_no_zero(Arena *arena, U64 size, U64 alignment) {
@@ -40,7 +40,7 @@ internal Void *arena_push_no_zero(Arena *arena, U64 size, U64 alignment) {
             U64 position_aligned     = u64_round_up_to_power_of_2(arena->position, ARENA_COMMIT_BLOCK_SIZE);
             U64 next_commit_position = u64_min(position_aligned, arena->capacity);
             U64 commit_size          = next_commit_position - arena->commit_position;
-            os_memory_commit(arena->memory + arena->commit_position, commit_size);
+            memory_commit(arena->memory + arena->commit_position, commit_size);
             memory_poison(arena->memory + arena->commit_position, commit_size);
             arena->commit_position = next_commit_position;
         }
@@ -64,7 +64,7 @@ internal Void arena_pop_to(Arena *arena, U64 position) {
         U64 next_commit_position = u64_min(position_aligned, arena->capacity);
         if (next_commit_position < arena->commit_position) {
             U64 decommit_size = arena->commit_position - next_commit_position;
-            os_memory_decommit(arena->memory + next_commit_position, decommit_size);
+            memory_decommit(arena->memory + next_commit_position, decommit_size);
             arena->commit_position = next_commit_position;
         }
     }

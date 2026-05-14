@@ -842,7 +842,7 @@ internal Void ttf_print_disassembly(U32 glyph_index, Str8 instructions) {
     }
 
     // NOTE(simon): Print.
-    os_console_print(str8_format(scratch.arena, "Instructions for glyph index %u:\n", glyph_index));
+    console_print(str8_format(scratch.arena, "Instructions for glyph index %u:\n", glyph_index));
     U64 indent = 0;
     Str8List output = { 0 };
     for (Function *function = first_function; function; function = function->next) {
@@ -875,7 +875,7 @@ internal Void ttf_print_disassembly(U32 glyph_index, Str8 instructions) {
     }
 
     Str8 output_string = str8_join(scratch.arena, output);
-    os_console_print(output_string);
+    console_print(output_string);
 
     arena_end_temporary(scratch);
 }
@@ -1374,7 +1374,7 @@ internal TTF_Font *ttf_load(Arena *arena, Str8 font_path) {
     B32 good = true;
 
     if (good) {
-        good = os_file_read(arena, font_path, &font_data);
+        good = file_read(arena, font_path, &font_data);
         if (!good) {
             log_error(str8_literal("Could not read file.\n"));
         }

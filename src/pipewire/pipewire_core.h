@@ -312,8 +312,8 @@ struct Pipewire_State {
     Pipewire_CommandList commands;
 
     // NOTE(simon): Control to user thread comunication.
-    OS_Mutex c2u_ring_mutex;
-    OS_ConditionVariable c2u_ring_condition_variable;
+    Mutex c2u_ring_mutex;
+    ConditionVariable c2u_ring_condition_variable;
     U64 c2u_ring_write_position;
     U64 c2u_ring_read_position;
     U64 c2u_ring_size;
@@ -321,8 +321,8 @@ struct Pipewire_State {
     VoidFunction *wakeup_hook;
 
     // NOTE(simon): User to control thread comunication.
-    OS_Mutex u2c_ring_mutex;
-    OS_ConditionVariable u2c_ring_condition_variable;
+    Mutex u2c_ring_mutex;
+    ConditionVariable u2c_ring_condition_variable;
     U64 u2c_ring_write_position;
     U64 u2c_ring_read_position;
     U64 u2c_ring_size;

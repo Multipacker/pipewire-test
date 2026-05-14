@@ -447,7 +447,7 @@ internal Void nat_test(Void) {
 
     Str8 path = str8_literal("feeds.json");
     Str8 source = { 0 };
-    os_file_read(arena, path, &source);
+    file_read(arena, path, &source);
     Nat_TokenArray tokens = nat_token_array_from_string(arena, source);
     for (U64 i = 0; i < tokens.count; ++i) {
         Nat_TokenFlags flags = tokens.tokens[i].flags;

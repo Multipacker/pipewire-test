@@ -180,7 +180,7 @@ internal FontCache_Font *font_cache_font_from_path(Str8 path) {
 
         result->hash = hash;
         Str8 data = { 0 };
-        os_file_read(state->arena, path, &data);
+        file_read(state->arena, path, &data);
         result->font = raster_load(state->arena, data);
 
         Font_Metrics metrics = raster_get_font_metrics(result->font);

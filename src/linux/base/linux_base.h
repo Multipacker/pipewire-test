@@ -10,7 +10,7 @@ typedef struct {
     B32 done;
     U8 buffer[255];
 } Linux_FileIterator;
-static_assert(sizeof(Linux_FileIterator) <= sizeof(OS_FileIterator));
+static_assert(sizeof(Linux_FileIterator) <= sizeof(FileIterator));
 
 typedef packed_struct({
     U64 inode;
@@ -32,7 +32,7 @@ struct Linux_Resource {
     Linux_Resource *next;
     union {
         struct {
-            OS_ThreadFunction *entry_point;
+            ThreadFunction *entry_point;
             Void *data;
             pthread_t thread;
         } thread;

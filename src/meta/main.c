@@ -84,7 +84,7 @@ internal Str8 string_from_literal(Arena *arena, Str8 raw) {
 internal S32 os_run(Str8List arguments) {
     Arena *arena = arena_create();
 
-    Str8 binary_path  = os_file_path(arena, OS_SYSTEM_PATH_BINARY);
+    Str8 binary_path  = file_path(arena, SystemPath_Binary);
     Str8 project_path = str8_chop_last_slash(binary_path);
     Str8 code_path    = str8_format(arena, "%.*s/src", str8_expand(project_path));
 
@@ -102,8 +102,8 @@ internal S32 os_run(Str8List arguments) {
             Str8Node *directory = directories;
             sll_stack_pop(directories);
 
-            OS_FileIterator *file_iterator = os_file_iterator_begin(scratch.arena, directory->string);
-            for (OS_FileInfo info = { 0 }; os_file_iterator_next(scratch.arena, file_iterator, &info); ) {
+            FileIterator *file_iterator = file_iterator_begin(scratch.arena, directory->string);
+            for (FileInfo info = { 0 }; file_iterator_next(scratch.arena, file_iterator, &info); ) {
                 Str8 name = str8_format(scratch.arena, "%.*s/%.*s", str8_expand(directory->string), str8_expand(info.name));
 
                 if (info.properties.flags & FilePropertyFlags_IsFolder) {
@@ -114,7 +114,7 @@ internal S32 os_run(Str8List arguments) {
                     str8_list_push(arena, &files, str8_copy(arena, name));
                 }
             }
-            os_file_iterator_end(file_iterator);
+            file_iterator_end(file_iterator);
         }
 
         arena_end_temporary(scratch);
@@ -140,7 +140,7 @@ internal S32 os_run(Str8List arguments) {
         Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
         Str8 contents = { 0 };
-        os_file_read(scratch.arena, file->string, &contents);
+        file_read(scratch.arena, file->string, &contents);
 
         TokenArray tokens = tokens_from_string(scratch.arena, file->string, contents);
 
@@ -169,10 +169,10 @@ internal S32 os_run(Str8List arguments) {
     }
     LogScopeResult parsing_log = log_scope_end(arena);
     if (parsing_log.strings[Log_MessageKind_Warning].data) {
-        os_console_print(parsing_log.strings[Log_MessageKind_Warning]);
+        console_print(parsing_log.strings[Log_MessageKind_Warning]);
     }
     if (parsing_log.strings[Log_MessageKind_Error].data) {
-        os_console_print(parsing_log.strings[Log_MessageKind_Error]);
+        console_print(parsing_log.strings[Log_MessageKind_Error]);
     }
 
     Meta_Layer *first_layer = 0;
@@ -212,7 +212,7 @@ internal S32 os_run(Str8List arguments) {
 
         Str8 data_symbol_name = str8_format(arena, "%.*s_data", str8_expand(embed->identifier));
         Str8 contents = { 0 };
-        os_file_read(arena, embed_file, &contents);
+        file_read(arena, embed_file, &contents);
 
         Object_Symbol *data_symbol = object_add_symbol(arena, &layer->object, data_symbol_name);
         data_symbol->section_name = str8_literal(".data");
@@ -229,9 +229,9 @@ internal S32 os_run(Str8List arguments) {
         Str8 object_path = str8_format(arena, "build/%.*s.o",     str8_expand(layer_name));
         Str8 header_path = str8_format(arena, "%.*s/generated.h", str8_expand(layer->path));
 
-        os_file_write(header_path, layer->header_lines);
+        file_write(header_path, layer->header_lines);
         Str8List output = platform_binary_from_object(arena, layer->object);
-        os_file_write(object_path, output);
+        file_write(object_path, output);
     }
 
     arena_destroy(arena);

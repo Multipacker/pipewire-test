@@ -56,28 +56,66 @@ internal SYSTEMTIME win32_system_time_from_date_time(DateTime date_time) {
 
 
 
-// NOTE(simon): Memory.
-internal Void *os_memory_reserve(U64 size) {
+// NOTE(simon): @os_implementation Memory.
+
+internal Void *memory_reserve(U64 size) {
     Void *result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
     return(result);
 }
 
-internal Void os_memory_commit(Void *pointer, U64 size) {
+internal Void memory_commit(Void *pointer, U64 size) {
     VirtualAlloc(pointer, size, MEM_COMMIT, PAGE_READWRITE);
 }
 
-internal Void os_memory_decommit(Void *pointer, U64 size) {
+internal Void memory_decommit(Void *pointer, U64 size) {
     VirtualFree(pointer, size, MEM_DECOMMIT);
 }
 
-internal Void os_memory_release(Void *pointer, U64 size) {
+internal Void memory_release(Void *pointer, U64 size) {
     VirtualFree(pointer, 0, MEM_RELEASE);
 }
 
 
 
-// NOTE(simon): Files.
-internal B32 os_file_read(Arena *arena, Str8 file_name, Str8 *result) {
+// NOTE(simon): @os_implementation 
+
+internal Str8 file_path(Arena *arena, SystemPath path) {
+    Str8 result = { 0 };
+    Arena_Temporary scratch = arena_get_scratch(&arena, 1);
+
+    switch (path) {
+        case SystemPath_Binary: {
+            // TODO(simon): Handle insufficient buffer size.
+            DWORD size = kilobytes(32);
+            U16 *buffer = arena_push_array(scratch.arena, U16, size);
+            DWORD length = GetModuleFileNameW(0, (WCHAR *) buffer, size);
+            Str8 name = str8_from_str16(scratch.arena, str16(buffer, length));
+            Str8 name_chopped = str8_chop_last_slash(name);
+            result = str8_copy(arena, name_chopped);
+        } break;
+        case SystemPath_UserData: {
+            // TODO(simon): Handle insufficient buffer size.
+            DWORD size = kilobytes(32);
+            U16 *buffer = arena_push_array(scratch.arena, U16, size);
+            if (SUCCEEDED(SHGetFolderPathW(0, CSIDL_APPDATA, 0, 0, (WCHAR *) buffer))) {
+                result = str8_from_str16(arena, str16_cstr16(buffer));
+            }
+        } break;
+        case SystemPath_TemporaryData: {
+        } break;
+        case SystemPath_Count: {
+        } break;
+    }
+
+    arena_end_temporary(scratch);
+    return result;
+}
+
+
+
+// NOTE(simon): @os_implementation Files.
+
+internal B32 file_read(Arena *arena, Str8 file_name, Str8 *result) {
     B32 success = true;
     Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
@@ -132,7 +170,7 @@ internal B32 os_file_read(Arena *arena, Str8 file_name, Str8 *result) {
     return success;
 }
 
-internal B32 os_file_write(Str8 file_name, Str8List data) {
+internal B32 file_write(Str8 file_name, Str8List data) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr16 file_name_cstr16 = cstr16_from_str8(scratch.arena, file_name);
     HANDLE handle = CreateFileW((WCHAR *) file_name_cstr16, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
@@ -160,8 +198,7 @@ internal B32 os_file_write(Str8 file_name, Str8List data) {
     return false;
 }
 
-
-internal FileProperties os_file_properties(Str8 file_name) {
+internal FileProperties file_properties(Str8 file_name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
 
     CStr16 cstr16_file_name = cstr16_from_str8(scratch.arena, file_name);
@@ -202,7 +239,7 @@ internal FileProperties os_file_properties(Str8 file_name) {
     return result;
 }
 
-internal B32 os_file_delete(Str8 file_name) {
+internal B32 file_delete(Str8 file_name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr16 file_name_cstr16 = cstr16_from_str8(scratch.arena, file_name);
     B32 result = DeleteFileW(file_name_cstr16);
@@ -212,7 +249,7 @@ internal B32 os_file_delete(Str8 file_name) {
 
 // Moves the file if neccessary and replaces existing files.
 // NOTE(simon): This doens't replace existing files.
-internal B32 os_file_rename(Str8 old_name, Str8 new_name) {
+internal B32 file_rename(Str8 old_name, Str8 new_name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr16 old_name_cstr16 = cstr16_from_str8(scratch.arena, old_name);
     CStr16 new_name_cstr16 = cstr16_from_str8(scratch.arena, new_name);
@@ -221,7 +258,7 @@ internal B32 os_file_rename(Str8 old_name, Str8 new_name) {
     return result;
 }
 
-internal B32 os_file_make_directory(Str8 path) {
+internal B32 file_make_directory(Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr16 path_cstr16 = cstr16_from_str8(scratch.arena, path);
     B32 result = CreateDirectoryW(path_cstr16, 0);
@@ -230,7 +267,7 @@ internal B32 os_file_make_directory(Str8 path) {
 }
 
 // The directory must be empty.
-internal B32 os_file_delete_directory(Str8 path) {
+internal B32 file_delete_directory(Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr16 path_cstr16 = cstr16_from_str8(scratch.arena, path);
     B32 result = RemoveDirectoryW(path_cstr16);
@@ -240,21 +277,21 @@ internal B32 os_file_delete_directory(Str8 path) {
 
 
 
-// NOTE(simon): File iteration.
-internal OS_FileIterator *os_file_iterator_begin(Arena *arena, Str8 path) {
+// NOTE(simon): @os_implementation File iteration.
+internal FileIterator *file_iterator_begin(Arena *arena, Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
     Str8   path_with_wildcard = str8_concatenate(scratch.arena, path, str8_literal("\\*"));
     CStr16 path_cstr16        = cstr16_from_str8(scratch.arena, path_with_wildcard);
 
-    Win32_FileIterator *win32_iterator = (Win32_FileIterator *) arena_push_struct(arena, OS_FileIterator);
+    Win32_FileIterator *win32_iterator = (Win32_FileIterator *) arena_push_struct(arena, FileIterator);
     win32_iterator->handle = FindFirstFileExW((WCHAR *) path_cstr16, FindExInfoBasic, &win32_iterator->find_data, FindExSearchNameMatch, 0, FIND_FIRST_EX_LARGE_FETCH);
 
     arena_end_temporary(scratch);
-    return (OS_FileIterator *) win32_iterator;
+    return (FileIterator *) win32_iterator;
 }
 
-internal B32 os_file_iterator_next(Arena *arena, OS_FileIterator *iterator, OS_FileInfo *info) {
+internal B32 file_iterator_next(Arena *arena, FileIterator *iterator, FileInfo *info) {
     Win32_FileIterator *win32_iterator = (Win32_FileIterator *) iterator;
 
     B32 result = false;
@@ -293,7 +330,7 @@ internal B32 os_file_iterator_next(Arena *arena, OS_FileIterator *iterator, OS_F
     return result;
 }
 
-internal Void os_file_iterator_end(OS_FileIterator *iterator) {
+internal Void file_iterator_end(FileIterator *iterator) {
     Win32_FileIterator *win32_iterator = (Win32_FileIterator *) iterator;
     HANDLE zero_handle = { 0 };
     if (!memory_equal(&win32_iterator->handle, &zero_handle, sizeof(zero_handle))) {
@@ -303,7 +340,9 @@ internal Void os_file_iterator_end(OS_FileIterator *iterator) {
 
 
 
-internal Str8 os_current_directory(Arena *arena) {
+// NOTE(simon): @os_implementation 
+
+internal Str8 current_directory(Arena *arena) {
     Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
     DWORD length = GetCurrentDirectoryW(0, 0);
@@ -315,56 +354,25 @@ internal Str8 os_current_directory(Arena *arena) {
     return result;
 }
 
-internal Str8 os_file_path(Arena *arena, OS_SystemPath path) {
-    Str8 result = { 0 };
-    Arena_Temporary scratch = arena_get_scratch(&arena, 1);
-
-    switch (path) {
-        case OS_SYSTEM_PATH_BINARY: {
-            // TODO(simon): Handle insufficient buffer size.
-            DWORD size = kilobytes(32);
-            U16 *buffer = arena_push_array(scratch.arena, U16, size);
-            DWORD length = GetModuleFileNameW(0, (WCHAR *) buffer, size);
-            Str8 name = str8_from_str16(scratch.arena, str16(buffer, length));
-            Str8 name_chopped = str8_chop_last_slash(name);
-            result = str8_copy(arena, name_chopped);
-        } break;
-        case OS_SYSTEM_PATH_USER_DATA: {
-            // TODO(simon): Handle insufficient buffer size.
-            DWORD size = kilobytes(32);
-            U16 *buffer = arena_push_array(scratch.arena, U16, size);
-            if (SUCCEEDED(SHGetFolderPathW(0, CSIDL_APPDATA, 0, 0, (WCHAR *) buffer))) {
-                result = str8_from_str16(arena, str16_cstr16(buffer));
-            }
-        } break;
-        case OS_SYSTEM_PATH_TEMPORARY_DATA: {
-        } break;
-        case OS_SYSTEM_PATH_COUNT: {
-        } break;
-    }
-
-    arena_end_temporary(scratch);
-    return result;
-}
 
 
+// NOTE(simon): @os_implementation Time.
 
-// NOTE(simon): Time
-internal U64 os_now_nanoseconds(Void) {
+internal U64 time_now_nanoseconds(Void) {
     LARGE_INTEGER counter = { 0 };
     QueryPerformanceCounter(&counter);
     U64 result = counter.QuadPart * 1e9 / win32_state.performance_frequency;
     return result;
 }
 
-internal DateTime os_now_universal_time(Void) {
+internal DateTime time_now_universal_time(Void) {
     SYSTEMTIME system_time = { 0 };
     GetSystemTime(&system_time);
     DateTime result = win32_date_time_from_system_time(system_time);
     return result;
 }
 
-internal DateTime os_local_time_from_universal(DateTime *date_time) {
+internal DateTime time_local_from_universal(DateTime *date_time) {
     SYSTEMTIME system_time = win32_system_time_from_date_time(*date_time);
     FILETIME file_time = { 0 };
     SystemTimeToFileTime(&system_time, &file_time);
@@ -376,7 +384,7 @@ internal DateTime os_local_time_from_universal(DateTime *date_time) {
     return result;
 }
 
-internal DateTime os_universal_time_from_local(DateTime *date_time) {
+internal DateTime time_universal_from_local(DateTime *date_time) {
     SYSTEMTIME system_time_local = win32_system_time_from_date_time(*date_time);
     FILETIME file_time_local = { 0 };
     SystemTimeToFileTime(&system_time_local, &file_time_local);
@@ -388,24 +396,28 @@ internal DateTime os_universal_time_from_local(DateTime *date_time) {
     return result;
 }
 
-internal Void os_sleep_milliseconds(U64 time) {
+internal Void sleep_milliseconds(U64 time) {
     Sleep(time);
 }
 
 
 
-internal Void os_get_entropy(Void *data, U64 size) {
+// NOTE(simon): @os_implementation
+
+internal Void get_entropy(Void *data, U64 size) {
     BCryptGenRandom(0, data, size, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
 }
 
 
 
-internal B32 os_console_run(Str8 program, Str8List arguments) {
+// NOTE(simon): @os_implementation
+
+internal B32 console_run(Str8 program, Str8List arguments) {
     // TODO(simon): Implement
     return false;
 }
 
-internal Void os_console_print(Str8 string) {
+internal Void console_print(Str8 string) {
     Win32_State *state = &win32_state;
     Arena_Temporary scratch = arena_get_scratch(0, 0);
 
@@ -442,28 +454,29 @@ internal Void os_console_print(Str8 string) {
 
 
 
-internal Void os_restart_self(Void) {
+internal Void restart_self(Void) {
     // TODO: Implement
 }
 
-internal Void os_exit(S32 exit_code) {
+internal Void exit_self(S32 exit_code) {
     ExitProcess(exit_code);
 }
 
 
 
-// NOTE(simon): Threads
+// NOTE(simon): @os_implementation Threads.
+
 // TODO(simon): There might be a race condition if you run the following code:
-//     OS_Thread thread = os_thread_start(entry_point, data);
-//     os_thread_detach(thread);
-//     os_thread_start(other_entry_point, other_data);
-// If the first thread isn't started before the second call os_thread_start,
-// the values in the Linux_Resource will be replaced with new ones, causing
-// both threads to use the same entry point with the same data pointer. One
-// solution is to store the entry point and data in a separate allocation from
-// the thread handle that gets released once the new thread is started. This
-// would work as these cannot be accessed through the handle.
-internal DWORD os_win32_thread_entry(Void *data) {
+//     Thread thread = thread_start(entry_point, data);
+//     thread_detach(thread);
+//     thread_start(other_entry_point, other_data);
+// If the first thread isn't started before the second call thread_start, the
+// values in the Linux_Resource will be replaced with new ones, causing both
+// threads to use the same entry point with the same data pointer. One solution
+// is to store the entry point and data in a separate allocation from the
+// thread handle that gets released once the new thread is started. This would
+// work as these cannot be accessed through the handle.
+internal DWORD win32_thread_entry(Void *data) {
     Win32_Resource *thread = (Win32_Resource *) data;
     arena_init_scratch();
     thread->thread.entry_point(thread->thread.data);
@@ -471,21 +484,21 @@ internal DWORD os_win32_thread_entry(Void *data) {
     return 0;
 }
 
-internal OS_Thread os_thread_start(OS_ThreadFunction entry_point, Void *data) {
+internal Thread thread_start(ThreadFunction entry_point, Void *data) {
     Win32_Resource *resource = win32_resource_create();
     resource->thread.entry_point = entry_point;
     resource->thread.data = data;
-    resource->thread.handle = CreateThread(0, 0, os_win32_thread_entry, resource, 0, &resource->thread.tid);
-    OS_Thread result = { 0 };
+    resource->thread.handle = CreateThread(0, 0, win32_thread_entry, resource, 0, &resource->thread.tid);
+    Thread result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_thread_set_name(OS_Thread handle, Str8 name) {
+internal Void thread_set_name(Thread handle, Str8 name) {
     // TODO(simon): Implement this correctly.
 }
 
-internal B32 os_thread_join(OS_Thread handle) {
+internal B32 thread_join(Thread handle) {
     Win32_Resource *thread = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     DWORD wait_result = WaitForSingleObject(thread->thread.handle, INFINITE);
     CloseHandle(thread->thread.handle);
@@ -494,7 +507,7 @@ internal B32 os_thread_join(OS_Thread handle) {
     return result;
 }
 
-internal Void os_thread_detach(OS_Thread handle) {
+internal Void thread_detach(Thread handle) {
     Win32_Resource *thread = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     CloseHandle(thread->thread.handle);
     win32_resource_destroy(thread);
@@ -502,58 +515,60 @@ internal Void os_thread_detach(OS_Thread handle) {
 
 
 
-// NOTE(simon): Mutexes.
-internal OS_Mutex os_mutex_create(Void) {
+// NOTE(simon): @os_implementation Mutexes.
+
+internal Mutex mutex_create(Void) {
     Win32_Resource *resource = win32_resource_create();
     InitializeCriticalSection(&resource->mutex);
-    OS_Mutex result = { 0 };
+    Mutex result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_mutex_destroy(OS_Mutex handle) {
+internal Void mutex_destroy(Mutex handle) {
     Win32_Resource *mutex = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     DeleteCriticalSection(&mutex->mutex);
     win32_resource_destroy(mutex);
 }
 
-internal Void os_mutex_lock(OS_Mutex handle) {
+internal Void mutex_lock(Mutex handle) {
     Win32_Resource *mutex = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     EnterCriticalSection(&mutex->mutex);
 }
 
-internal Void os_mutex_unlock(OS_Mutex handle) {
+internal Void mutex_unlock(Mutex handle) {
     Win32_Resource *mutex = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     LeaveCriticalSection(&mutex->mutex);
 }
 
 
 
-// NOTE(simon): Condition variables.
-internal OS_ConditionVariable os_condition_variable_create(Void) {
+// NOTE(simon): @os_implementation Condition variables.
+
+internal ConditionVariable condition_variable_create(Void) {
     Win32_Resource *resource = win32_resource_create();
     InitializeConditionVariable(&resource->condition_variable);
-    OS_ConditionVariable result = { 0 };
+    ConditionVariable result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_condition_variable_destroy(OS_ConditionVariable handle) {
+internal Void condition_variable_destroy(ConditionVariable handle) {
     Win32_Resource *condition_variable = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     win32_resource_destroy(condition_variable);
 }
 
-internal Void os_condition_variable_signal(OS_ConditionVariable handle) {
+internal Void condition_variable_signal(ConditionVariable handle) {
     Win32_Resource *condition_variable = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     WakeConditionVariable(&condition_variable->condition_variable);
 }
 
-internal Void os_condition_variable_broadcast(OS_ConditionVariable handle) {
+internal Void condition_variable_broadcast(ConditionVariable handle) {
     Win32_Resource *condition_variable = (Win32_Resource *) pointer_from_integer(handle.u64[0]);
     WakeAllConditionVariable(&condition_variable->condition_variable);
 }
 
-internal Void os_condition_variable_wait(OS_ConditionVariable condition_variable_handle, OS_Mutex mutex_handle, U64 end_ns) {
+internal Void condition_variable_wait(ConditionVariable condition_variable_handle, Mutex mutex_handle, U64 end_ns) {
     Win32_Resource *condition_variable = (Win32_Resource *) pointer_from_integer(condition_variable_handle.u64[0]);
     Win32_Resource *mutex = (Win32_Resource *) pointer_from_integer(mutex_handle.u64[0]);
     if (end_ns == U64_MAX) {

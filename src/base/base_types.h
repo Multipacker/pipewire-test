@@ -28,31 +28,6 @@ typedef U32  *CStr32;
 typedef Void  VoidFunction(Void);
 
 typedef enum {
-    Month_Jan,
-    Month_Feb,
-    Month_Mar,
-    Month_Apr,
-    Month_May,
-    Month_Jun,
-    Month_Jul,
-    Month_Aug,
-    Month_Sep,
-    Month_Oct,
-    Month_Nov,
-    Month_Dec,
-} Month;
-
-typedef enum {
-    Day_Monday,
-    Day_Tuesday,
-    Day_Wednesday,
-    Day_Thursday,
-    Day_Friday,
-    Day_Saturday,
-    Day_Sunday,
-} Day;
-
-typedef enum {
     OperatingSystem_Null,
     OperatingSystem_Windows,
     OperatingSystem_Linux,
@@ -74,32 +49,6 @@ typedef enum {
     DataAccessFlags_Write   = (1 << 1),
     DataAccessFlags_Execute = (1 << 2),
 } DataAccessFlags;
-
-typedef U64 DenseTime;
-
-typedef struct {
-    U16 millisecond;  // [0, 999]
-    U8  second;       // [0, 60] 60 in the case of leap seconds
-    U8  minute;       // [0, 59]
-    U8  hour;         // [0, 23]
-    U8  day;          // [0, 30]
-    U8  month;        // [0, 11]
-    S16 year;        // 1 = 1 CE; 2020 = 2020 CE, 0 = 1 BCE; -100 = 101 BCE; etc.
-} DateTime;
-
-typedef enum {
-    FilePropertyFlags_IsFolder = (1 << 0),
-} FilePropertyFlags;
-
-// NOTE: DenseTime is in universal time by default.
-typedef struct FileProperties FileProperties;
-struct FileProperties {
-    U64 size;
-    FilePropertyFlags flags;
-    DenseTime create_time;
-    DenseTime modify_time;
-    DataAccessFlags access;
-};
 
 typedef enum {
     Side_Invalid = -1,
@@ -291,8 +240,5 @@ internal F64 f64_pow(F64 a, F64 b);
 internal F64 f64_floor(F64 x);
 internal F64 f64_ceil(F64 x);
 internal F64 f64_mod(F64 x, F64 y);
-
-internal DenseTime dense_time_from_date_time(DateTime *date_time);
-internal DateTime  date_time_from_dense_time(DenseTime dense_time);
 
 #endif // TYPES_H

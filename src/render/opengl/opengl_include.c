@@ -160,7 +160,7 @@ internal B32 render_init(Void) {
             glGetShaderInfoLog(shaders[i].shader, log_length, 0, (GLchar *) shaders[i].errors.data);
 
             gfx_message(true, str8_literal("Failed to compile OpenGL shader"), shaders[i].errors);
-            os_exit(1);
+            exit_self(1);
         }
     }
 
@@ -182,7 +182,7 @@ internal B32 render_init(Void) {
         glGetProgramInfoLog(state->program, log_length, 0, (GLchar *) errors.data);
 
         gfx_message(true, str8_literal("Failed to link OpenGL program"), errors);
-        os_exit(1);
+        exit_self(1);
     }
 
 

@@ -186,7 +186,7 @@ internal B32 render_init(Void) {
 
     if (FAILED(error)) {
         // TODO(simon): Inform the user that we could not create a D3D11 device.
-        os_exit(1);
+        exit_self(1);
     }
 
     ID3D11Device_QueryInterface(state->base_device, &IID_ID3D11Device1, (Void **) &state->device);
@@ -258,7 +258,7 @@ internal B32 render_init(Void) {
     );
     if (FAILED(error)) {
         Str8 errors = str8(ID3D10Blob_GetBufferPointer(vertex_error_blob), ID3D10Blob_GetBufferSize(vertex_error_blob));
-        os_console_print(errors);
+        console_print(errors);
     }
     ID3D11Device_CreateVertexShader(state->device, ID3D10Blob_GetBufferPointer(vertex_blob), ID3D10Blob_GetBufferSize(vertex_blob), 0, &state->vertex_shader);
 
@@ -300,7 +300,7 @@ internal B32 render_init(Void) {
 
     if (FAILED(error)) {
         Str8 errors = str8(ID3D10Blob_GetBufferPointer(pixel_error_blob), ID3D10Blob_GetBufferSize(pixel_error_blob));
-        os_console_print(errors);
+        console_print(errors);
     }
 
     ID3D11Device_CreatePixelShader(state->device, ID3D10Blob_GetBufferPointer(pixel_blob), ID3D10Blob_GetBufferSize(pixel_blob), 0, &state->pixel_shader);
@@ -357,7 +357,7 @@ internal Render_Window render_create(Gfx_Window graphics_handle) {
 
     if (FAILED(error)) {
         // TODO(simon): Inform the user that we could not create a D3D11 swap chain.
-        os_exit(1);
+        exit_self(1);
     }
 
     IDXGISwapChain_GetBuffer(render_window->swap_chain, 0, &IID_ID3D11Texture2D, (Void **) &render_window->framebuffer);
@@ -506,7 +506,7 @@ internal Void render_window_end(Gfx_Window graphics_handle, Render_Window render
     HRESULT error = IDXGISwapChain_Present(render_window->swap_chain, 1, 0);
     if (FAILED(error)) {
         // TODO(simon): Inform the user that we could not present the swap chain.
-        os_exit(1);
+        exit_self(1);
     }
 }
 

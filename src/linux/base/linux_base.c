@@ -90,25 +90,104 @@ internal Void linux_file_properties_from_stat(FileProperties *properties, struct
     }
 }
 
-internal Void *os_memory_reserve(U64 size) {
+
+
+// NOTE(simon): @os_implementation Memory.
+
+internal Void *memory_reserve(U64 size) {
     Void *result = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return result;
 }
 
-internal Void os_memory_commit(Void *pointer, U64 size) {
+internal Void memory_commit(Void *pointer, U64 size) {
     mprotect(pointer, size, PROT_READ | PROT_WRITE);
 }
 
-internal Void os_memory_decommit(Void *pointer, U64 size) {
+internal Void memory_decommit(Void *pointer, U64 size) {
     mprotect(pointer, size, PROT_NONE);
     madvise(pointer, size, MADV_DONTNEED);
 }
 
-internal Void os_memory_release(Void *pointer, U64 size) {
+internal Void memory_release(Void *pointer, U64 size) {
     munmap(pointer, size);
 }
 
-internal B32 os_file_read(Arena *arena, Str8 file_name, Str8 *result) {
+
+
+// NOTE(simon): @os_implementation
+
+internal Str8 file_path(Arena *arena, SystemPath path) {
+    Str8 result = { 0 };
+
+    switch (path) {
+        case SystemPath_Binary: {
+            Arena_Temporary scratch = arena_get_scratch(&arena, 1);
+
+            U64     buffer_size = 256;
+            ssize_t read        = 0;
+            U8     *buffer      = arena_push_array_no_zero(scratch.arena, U8, buffer_size);
+
+            // NOTE: Readlink truncates the result to fit in the buffer, so as
+            // long as the number of bytes read is the same as the buffer size,
+            // expand the buffer and try again.
+            for (;;) {
+                read = readlink("/proc/self/exe", (CStr) buffer, buffer_size);
+                if (read == -1) {
+                    // TODO: Handle error
+                } else if ((U64) read == buffer_size) {
+                    arena_end_temporary(scratch);
+                    scratch = arena_begin_temporary(scratch.arena);
+
+                    buffer_size *= 2;
+                    buffer       = arena_push_array_no_zero(scratch.arena, U8, buffer_size);
+                } else {
+                    break;
+                }
+            }
+
+            Str8 result_path = str8(buffer, (U64) read);
+
+            U64 index = str8_last_index_of(result_path, '/');
+            result_path = str8_prefix(result_path, index);
+
+            result = str8_copy(arena, result_path);
+        } break;
+        case SystemPath_UserData: {
+            struct passwd *user_data = getpwuid(geteuid());
+            if (user_data) {
+                Str8List config_path_list = { 0 };
+                Str8Node nodes[2];
+                str8_list_push_explicit(&config_path_list, str8_cstr(user_data->pw_dir), &nodes[0]);
+                str8_list_push_explicit(&config_path_list, str8_literal("/.config"), &nodes[1]);
+                result = str8_join(arena, config_path_list);
+            } else {
+                // TODO: Handle error
+            }
+        } break;
+        case SystemPath_TemporaryData: {
+            struct passwd *user_data = getpwuid(geteuid());
+            if (user_data) {
+                Str8List cache_path_list = { 0 };
+                Str8Node nodes[2];
+                str8_list_push_explicit(&cache_path_list, str8_cstr(user_data->pw_dir), &nodes[0]);
+                str8_list_push_explicit(&cache_path_list, str8_literal("/.cache"), &nodes[1]);
+                result = str8_join(arena, cache_path_list);
+            } else {
+                // TODO: Handle error
+            }
+        } break;
+        case SystemPath_Count: {
+        } break;
+    }
+
+    return result;
+}
+
+
+
+// NOTE(simon): @os_implementation Files.
+
+internal B32 file_read(Arena *arena, Str8 file_name, Str8 *result) {
     // Open a file_descriptor
     Arena_Temporary scratch_restore = arena_begin_temporary(arena);
     CStr file_name_c = cstr_from_str8(arena, file_name);
@@ -152,7 +231,7 @@ internal B32 os_file_read(Arena *arena, Str8 file_name, Str8 *result) {
     return success;
 }
 
-internal B32 os_file_write(Str8 file_name, Str8List data) {
+internal B32 file_write(Str8 file_name, Str8List data) {
     // Open a file_descriptor
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr file_name_c = cstr_from_str8(scratch.arena, file_name);
@@ -186,7 +265,7 @@ internal B32 os_file_write(Str8 file_name, Str8List data) {
     return result;
 }
 
-internal FileProperties os_file_properties(Str8 file_name) {
+internal FileProperties file_properties(Str8 file_name) {
     FileProperties result = { 0 };
 
     Arena_Temporary scratch = arena_get_scratch(0, 0);
@@ -201,7 +280,7 @@ internal FileProperties os_file_properties(Str8 file_name) {
     return result;
 }
 
-internal B32 os_file_delete(Str8 file_name) {
+internal B32 file_delete(Str8 file_name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr file_name_c = cstr_from_str8(scratch.arena, file_name);
 
@@ -211,7 +290,7 @@ internal B32 os_file_delete(Str8 file_name) {
     return success;
 }
 
-internal B32 os_file_rename(Str8 old_name, Str8 new_name) {
+internal B32 file_rename(Str8 old_name, Str8 new_name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr old_name_c = cstr_from_str8(scratch.arena, old_name);
     CStr new_name_c = cstr_from_str8(scratch.arena, new_name);
@@ -221,7 +300,7 @@ internal B32 os_file_rename(Str8 old_name, Str8 new_name) {
     return success;
 }
 
-internal B32 os_file_make_directory(Str8 path) {
+internal B32 file_make_directory(Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr path_c = cstr_from_str8(scratch.arena, path);
 
@@ -231,7 +310,7 @@ internal B32 os_file_make_directory(Str8 path) {
     return success;
 }
 
-internal B32 os_file_delete_directory(Str8 path) {
+internal B32 file_delete_directory(Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     CStr path_c = cstr_from_str8(scratch.arena, path);
 
@@ -241,19 +320,23 @@ internal B32 os_file_delete_directory(Str8 path) {
     return success;
 }
 
-internal OS_FileIterator *os_file_iterator_begin(Arena *arena, Str8 path) {
+
+
+// NOTE(simon): @os_implementation File iteration.
+
+internal FileIterator *file_iterator_begin(Arena *arena, Str8 path) {
     Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
     CStr path_c = cstr_from_str8(scratch.arena, path);
 
-    Linux_FileIterator *linux_iterator = (Linux_FileIterator *) arena_push_struct(arena, OS_FileIterator);
+    Linux_FileIterator *linux_iterator = (Linux_FileIterator *) arena_push_struct(arena, FileIterator);
     linux_iterator->file_descriptor = open(path_c, O_RDONLY | O_DIRECTORY);
 
     arena_end_temporary(scratch);
-    return (OS_FileIterator *) linux_iterator;
+    return (FileIterator *) linux_iterator;
 }
 
-internal B32 os_file_iterator_next(Arena *arena, OS_FileIterator *iterator, OS_FileInfo *info) {
+internal B32 file_iterator_next(Arena *arena, FileIterator *iterator, FileInfo *info) {
     B32 result = false;
 
     Linux_FileIterator *linux_iterator = (Linux_FileIterator *) iterator;
@@ -332,7 +415,7 @@ internal B32 os_file_iterator_next(Arena *arena, OS_FileIterator *iterator, OS_F
     return result;
 }
 
-internal Void os_file_iterator_end(OS_FileIterator *iterator) {
+internal Void file_iterator_end(FileIterator *iterator) {
     Linux_FileIterator *linux_iterator = (Linux_FileIterator *) iterator;
     if (linux_iterator->file_descriptor != -1) {
         close(linux_iterator->file_descriptor);
@@ -341,7 +424,9 @@ internal Void os_file_iterator_end(OS_FileIterator *iterator) {
 
 
 
-internal Str8 os_current_directory(Arena *arena) {
+// NOTE(simon): @os_implementation
+
+internal Str8 current_directory(Arena *arena) {
     Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
     U64 buffer_size = 256;
@@ -364,74 +449,11 @@ internal Str8 os_current_directory(Arena *arena) {
     return result;
 }
 
-internal Str8 os_file_path(Arena *arena, OS_SystemPath path) {
-    Str8 result = { 0 };
 
-    switch (path) {
-        case OS_SYSTEM_PATH_BINARY: {
-            Arena_Temporary scratch = arena_get_scratch(&arena, 1);
 
-            U64     buffer_size = 256;
-            ssize_t read        = 0;
-            U8     *buffer      = arena_push_array_no_zero(scratch.arena, U8, buffer_size);
+// NOTE(simon): @os_implementation Time.
 
-            // NOTE: Readlink truncates the result to fit in the buffer, so as
-            // long as the number of bytes read is the same as the buffer size,
-            // expand the buffer and try again.
-            for (;;) {
-                read = readlink("/proc/self/exe", (CStr) buffer, buffer_size);
-                if (read == -1) {
-                    // TODO: Handle error
-                } else if ((U64) read == buffer_size) {
-                    arena_end_temporary(scratch);
-                    scratch = arena_begin_temporary(scratch.arena);
-
-                    buffer_size *= 2;
-                    buffer       = arena_push_array_no_zero(scratch.arena, U8, buffer_size);
-                } else {
-                    break;
-                }
-            }
-
-            Str8 result_path = str8(buffer, (U64) read);
-
-            U64 index = str8_last_index_of(result_path, '/');
-            result_path = str8_prefix(result_path, index);
-
-            result = str8_copy(arena, result_path);
-        } break;
-        case OS_SYSTEM_PATH_USER_DATA: {
-            struct passwd *user_data = getpwuid(geteuid());
-            if (user_data) {
-                Str8List config_path_list = { 0 };
-                Str8Node nodes[2];
-                str8_list_push_explicit(&config_path_list, str8_cstr(user_data->pw_dir), &nodes[0]);
-                str8_list_push_explicit(&config_path_list, str8_literal("/.config"), &nodes[1]);
-                result = str8_join(arena, config_path_list);
-            } else {
-                // TODO: Handle error
-            }
-        } break;
-        case OS_SYSTEM_PATH_TEMPORARY_DATA: {
-            struct passwd *user_data = getpwuid(geteuid());
-            if (user_data) {
-                Str8List cache_path_list = { 0 };
-                Str8Node nodes[2];
-                str8_list_push_explicit(&cache_path_list, str8_cstr(user_data->pw_dir), &nodes[0]);
-                str8_list_push_explicit(&cache_path_list, str8_literal("/.cache"), &nodes[1]);
-                result = str8_join(arena, cache_path_list);
-            } else {
-                // TODO: Handle error
-            }
-        } break;
-        case OS_SYSTEM_PATH_COUNT: {
-        } break;
-    }
-
-    return result;
-}
-
-internal DateTime os_now_universal_time(Void) {
+internal DateTime time_now_universal(Void) {
     struct timespec time = { 0 };
     clock_gettime(CLOCK_REALTIME, &time);
 
@@ -443,7 +465,7 @@ internal DateTime os_now_universal_time(Void) {
     return linux_date_time_from_tm_and_milliseconds(&deconstructed_time, (U16) (time.tv_nsec / 1000000));
 }
 
-internal DateTime os_local_time_from_universal(DateTime *date_time) {
+internal DateTime time_local_from_universal(DateTime *date_time) {
     struct tm universal_tm   = linux_tm_from_date_time(date_time);
     time_t    universal_time = timegm(&universal_tm);
 
@@ -455,7 +477,7 @@ internal DateTime os_local_time_from_universal(DateTime *date_time) {
     return local_date_time;
 }
 
-internal DateTime os_universal_time_from_local(DateTime *date_time) {
+internal DateTime time_universal_from_local(DateTime *date_time) {
     struct tm local_tm   = linux_tm_from_date_time(date_time);
     time_t    local_time = timelocal(&local_tm);
 
@@ -468,7 +490,7 @@ internal DateTime os_universal_time_from_local(DateTime *date_time) {
     return universal_date_time;
 }
 
-internal U64 os_now_nanoseconds(Void) {
+internal U64 time_now_nanoseconds(Void) {
     struct timespec time = { 0 };
     if (clock_gettime(CLOCK_REALTIME, &time) == -1) {
         // TODO: Handle error
@@ -477,7 +499,7 @@ internal U64 os_now_nanoseconds(Void) {
     return nanoseconds;
 }
 
-internal Void os_sleep_milliseconds(U64 time) {
+internal Void sleep_milliseconds(U64 time) {
     struct timespec sleep     = { 0 };
     struct timespec remainder = { 0 };
 
@@ -491,7 +513,11 @@ internal Void os_sleep_milliseconds(U64 time) {
     }
 }
 
-internal Void os_get_entropy(Void *data, U64 size) {
+
+
+// NOTE(simon): @os_implementation
+
+internal Void get_entropy(Void *data, U64 size) {
     int file_descriptor = open("/dev/urandom", O_RDONLY);
     if (file_descriptor != -1) {
         U8 *ptr = data;
@@ -511,7 +537,11 @@ internal Void os_get_entropy(Void *data, U64 size) {
     }
 }
 
-internal B32 os_console_run(Str8 program, Str8List arguments) {
+
+
+// NOTE(simon): @os_implementation
+
+internal B32 console_run(Str8 program, Str8List arguments) {
     B32 success = false;
 
     Arena_Temporary scratch = arena_get_scratch(0, 0);
@@ -545,11 +575,11 @@ internal B32 os_console_run(Str8 program, Str8List arguments) {
     return success;
 }
 
-internal Void os_console_print(Str8 string) {
+internal Void console_print(Str8 string) {
     write(1, string.data, string.size);
 }
 
-internal Void os_restart_self(Void) {
+internal Void restart_self(Void) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     U64   argument_count  = linux_argument_list.node_count + 1;
     CStr *arguments_array = arena_push_array_no_zero(scratch.arena, CStr, argument_count);
@@ -568,23 +598,25 @@ internal Void os_restart_self(Void) {
     arena_end_temporary(scratch);
 }
 
-internal Void os_exit(S32 exit_code) {
+internal Void exit_self(S32 exit_code) {
     syscall(SYS_exit_group, exit_code);
 }
 
 
 
+// NOTE(simon): @os_implementation Threads.
+
 // TODO(simon): There might be a race condition if you run the following code:
-//     OS_Thread thread = os_thread_start(entry_point, data);
-//     os_thread_detach(thread);
-//     os_thread_start(other_entry_point, other_data);
-// If the first thread isn't started before the second call os_thread_start,
-// the values in the Linux_Resource will be replaced with new ones, causing
-// both threads to use the same entry point with the same data pointer. One
-// solution is to store the entry point and data in a separate allocation from
-// the thread handle that gets released once the new thread is started. This
-// would work as these cannot be accessed through the handle.
-internal Void *os_linux_thread_entry(Void *data) {
+//     Thread thread = thread_start(entry_point, data);
+//     thread_detach(thread);
+//     thread_start(other_entry_point, other_data);
+// If the first thread isn't started before the second call thread_start, the
+// values in the Linux_Resource will be replaced with new ones, causing both
+// threads to use the same entry point with the same data pointer. One solution
+// is to store the entry point and data in a separate allocation from the
+// thread handle that gets released once the new thread is started. This would
+// work as these cannot be accessed through the handle.
+internal Void *linux_thread_entry(Void *data) {
     Linux_Resource *thread = (Linux_Resource *) data;
     arena_init_scratch();
     thread->thread.entry_point(thread->thread.data);
@@ -592,25 +624,25 @@ internal Void *os_linux_thread_entry(Void *data) {
     return 0;
 }
 
-internal OS_Thread os_thread_start(OS_ThreadFunction entry_point, Void *data) {
+internal Thread thread_start(ThreadFunction entry_point, Void *data) {
     Linux_Resource *resource = linux_resource_create();
 
     resource->thread.entry_point = entry_point;
     resource->thread.data = data;
 
-    int create_result = pthread_create(&resource->thread.thread, 0, os_linux_thread_entry, resource);
+    int create_result = pthread_create(&resource->thread.thread, 0, linux_thread_entry, resource);
 
     if (create_result != 0) {
         linux_resource_destroy(resource);
         resource = 0;
     }
 
-    OS_Thread result = { 0 };
+    Thread result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_thread_set_name(OS_Thread handle, Str8 name) {
+internal Void thread_set_name(Thread handle, Str8 name) {
     Arena_Temporary scratch = arena_get_scratch(0, 0);
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     // NOTE(simon): According to `man pthread_setname_np`, the thread name is
@@ -621,12 +653,12 @@ internal Void os_thread_set_name(OS_Thread handle, Str8 name) {
     arena_end_temporary(scratch);
 }
 
-internal Void os_thread_detach(OS_Thread handle) {
+internal Void thread_detach(Thread handle) {
     Linux_Resource *thread = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     linux_resource_destroy(thread);
 }
 
-internal B32 os_thread_join(OS_Thread handle) {
+internal B32 thread_join(Thread handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     int join_result = pthread_join(resource->thread.thread, 0);
     B32 result = join_result == 0;
@@ -638,61 +670,65 @@ internal B32 os_thread_join(OS_Thread handle) {
 
 
 
-internal OS_Mutex os_mutex_create(Void) {
+// NOTE(simon): @os_implementation Mutex.
+
+internal Mutex mutex_create(Void) {
     Linux_Resource *resource = linux_resource_create();
 
     pthread_mutex_init(&resource->mutex, 0);
 
-    OS_Mutex result = { 0 };
+    Mutex result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_mutex_destroy(OS_Mutex handle) {
+internal Void mutex_destroy(Mutex handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_mutex_destroy(&resource->mutex);
     linux_resource_destroy(resource);
 }
 
-internal Void os_mutex_lock(OS_Mutex handle) {
+internal Void mutex_lock(Mutex handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_mutex_lock(&resource->mutex);
 }
 
-internal Void os_mutex_unlock(OS_Mutex handle) {
+internal Void mutex_unlock(Mutex handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_mutex_unlock(&resource->mutex);
 }
 
 
 
-internal OS_ConditionVariable os_condition_variable_create(Void) {
+// NOTE(simon): @os_implementation Condition variable.
+
+internal ConditionVariable condition_variable_create(Void) {
     Linux_Resource *resource = linux_resource_create();
 
     pthread_cond_init(&resource->condition_variable, 0);
 
-    OS_ConditionVariable result = { 0 };
+    ConditionVariable result = { 0 };
     result.u64[0] = integer_from_pointer(resource);
     return result;
 }
 
-internal Void os_condition_variable_destroy(OS_ConditionVariable handle) {
+internal Void condition_variable_destroy(ConditionVariable handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_cond_destroy(&resource->condition_variable);
     linux_resource_destroy(resource);
 }
 
-internal Void os_condition_variable_signal(OS_ConditionVariable handle) {
+internal Void condition_variable_signal(ConditionVariable handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_cond_signal(&resource->condition_variable);
 }
 
-internal Void os_condition_variable_broadcast(OS_ConditionVariable handle) {
+internal Void condition_variable_broadcast(ConditionVariable handle) {
     Linux_Resource *resource = (Linux_Resource *) pointer_from_integer(handle.u64[0]);
     pthread_cond_broadcast(&resource->condition_variable);
 }
 
-internal B32 os_condition_variable_wait(OS_ConditionVariable condition_variable_handle, OS_Mutex mutex_handle, U64 end_ns) {
+internal B32 condition_variable_wait(ConditionVariable condition_variable_handle, Mutex mutex_handle, U64 end_ns) {
     Linux_Resource *condition_variable = (Linux_Resource *) pointer_from_integer(condition_variable_handle.u64[0]);
     Linux_Resource *mutex = (Linux_Resource *) pointer_from_integer(mutex_handle.u64[0]);
 

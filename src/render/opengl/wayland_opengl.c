@@ -23,27 +23,27 @@ internal B32 opengl_backend_init(Void) {
     opengl_state->eglCreatePlatformWindowSurfaceEXT = (PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC) eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
     if (!eglGetPlatformDisplayEXT || !opengl_state->eglCreatePlatformWindowSurfaceEXT) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not load eglGetPlatformDisplayEXT or eglCreatePlatformWindowSurfaceEXT."));
-        os_exit(1);
+        exit_self(1);
     }
 
     // NOTE(simon): Get display.
     opengl_state->display = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT, wayland_state->display, 0);
     if (opengl_state->display == EGL_NO_DISPLAY) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not acquire EGL display."));
-        os_exit(1);
+        exit_self(1);
     }
 
     // NOTE(simon): Initialize.
     EGLint major = 0, minor = 0;
     if (!eglInitialize(opengl_state->display, &major, &minor)) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not initialize EGL."));
-        os_exit(1);
+        exit_self(1);
     }
 
     // NOTE(simon): Bind OpenGL API.
     if (!eglBindAPI(EGL_OPENGL_API)) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not bind OpenGL API."));
-        os_exit(1);
+        exit_self(1);
     }
 
     // NOTE(simon): Gather configs.
@@ -78,7 +78,7 @@ internal B32 opengl_backend_init(Void) {
 
     if (!opengl_state->config) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not find a suitable config."));
-        os_exit(1);
+        exit_self(1);
     }
 
     // NOTE(simon): Create context.
@@ -91,7 +91,7 @@ internal B32 opengl_backend_init(Void) {
     opengl_state->context = eglCreateContext(opengl_state->display, opengl_state->config, EGL_NO_CONTEXT, context_attributes);
     if (opengl_state->context == EGL_NO_CONTEXT) {
         gfx_message(true, str8_literal("Failed to initialize OpenGL"), str8_literal("Could not create a context."));
-        os_exit(1);
+        exit_self(1);
     }
 
     eglMakeCurrent(opengl_state->display, EGL_NO_SURFACE, EGL_NO_SURFACE, opengl_state->context);
@@ -136,7 +136,7 @@ internal Render_Window opengl_backend_create(Gfx_Window handle) {
 
     if (render_window->surface == EGL_NO_SURFACE) {
         gfx_message(true, str8_literal("Failed to create OpenGL window"), str8_literal("Could not create a EGL window surface."));
-        os_exit(1);
+        exit_self(1);
     }
 
     Render_Window result = opengl_handle_from_window(render_window);
