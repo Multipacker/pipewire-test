@@ -6,4 +6,11 @@
 #include "base_hash.c"
 #include "base_color.c"
 #include "base_log.c"
-#include "os_include.c"
+
+#if OS_LINUX
+# include "src/linux/base/linux_base.c"
+#elif OS_WINDOWS
+# include "src/win32/base/win32_base.c"
+#else
+# error no backend for os_include.c on this operating system
+#endif

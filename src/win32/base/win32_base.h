@@ -1,5 +1,5 @@
-#ifndef WIN32_ESSENTIAL_H
-#define WIN32_ESSENTIAL_H
+#ifndef WIN32_BASE_H
+#define WIN32_BASE_H
 
 #define UNICODE
 #define WIN32_LEAN_AND_MEAN
@@ -49,4 +49,4 @@ struct Win32_State {
 internal DateTime   win32_date_time_from_system_time(SYSTEMTIME system_time);
 internal SYSTEMTIME win32_system_time_from_date_time(DateTime date_time);
 
-#endif // WIN32_ESSENTIAL_H
+#endif // WIN32_BASE_H

@@ -13,4 +13,12 @@
 #include "base_log.h"
 #include "os_include.h"
 
+#if OS_LINUX
+# include "src/linux/base/linux_base.h"
+#elif OS_WINDOWS
+# include "src/win32/base/win32_base.h"
+#else
+# error no backend for os_include.c on this operating system
+#endif
+
 #endif // BASE_INCLUDE_H

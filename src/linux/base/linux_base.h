@@ -1,5 +1,5 @@
-#ifndef LINUX_ESSENTIAL_H
-#define LINUX_ESSENTIAL_H
+#ifndef LINUX_BASE_H
+#define LINUX_BASE_H
 
 #include <pthread.h>
 
@@ -41,4 +41,4 @@ struct Linux_Resource {
     };
 };
 
-#endif // LINUX_ESSENTIAL_H
+#endif // LINUX_BASE_H
