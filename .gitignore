@@ -3,3 +3,4 @@
 /.vimrc
 **/*.generated.*
 **/generated.*
+result

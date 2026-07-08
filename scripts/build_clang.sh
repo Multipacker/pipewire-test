@@ -16,6 +16,9 @@ if [ ! -v wayland ] && [ ! -v x11 ]; then
     fi
 fi
 
+# Flags to override on weird systems, for example Nix
+WAYLAND_PROTOCOLS_DIR="${WAYLAND_PROTOCOLS_DIR:-"/usr/share/wayland-protocols/"}"
+
 # Common flags
 
 errors=""
@@ -45,7 +48,7 @@ if [ -v error_limit ]; then
     errors+="-ferror-limit=5 "
 fi
 
-base_libraries="-lm -lpthread -lpipewire-0.3 -I/usr/include/pipewire-0.3 -I/usr/include/spa-0.2 -D_REENTRANT"
+base_libraries="-lm -lpthread $(pkg-config --libs --cflags libpipewire-0.3) -D_REENTRANT"
 wayland_libraries="-lwayland-client -lwayland-egl -lwayland-cursor -lEGL -lxkbcommon"
 x11_libraries="-lxcb -lxcb-cursor -lxcb-sync -lxcb-xkb -lxkbcommon-x11 -lEGL -lxkbcommon"
 render_libraries="build/opengl.o"
@@ -56,14 +59,14 @@ if [ -v wayland ]; then
     graphics_libraries="${wayland_libraries}"
     defines="-DLINUX_WAYLAND=1"
 
-    wayland-scanner client-header < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > src/graphics/wayland/wayland_xdg_shell.generated.h
-    wayland-scanner private-code  < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > src/graphics/wayland/wayland_xdg_shell.generated.c
-    wayland-scanner client-header < /usr/share/wayland-protocols/stable/viewporter/viewporter.xml > src/graphics/wayland/wayland_viewporter.generated.h
-    wayland-scanner private-code  < /usr/share/wayland-protocols/stable/viewporter/viewporter.xml > src/graphics/wayland/wayland_viewporter.generated.c
-    wayland-scanner client-header < /usr/share/wayland-protocols/staging/fractional-scale/fractional-scale-v1.xml > src/graphics/wayland/wayland_fractional_scale.generated.h
-    wayland-scanner private-code  < /usr/share/wayland-protocols/staging/fractional-scale/fractional-scale-v1.xml > src/graphics/wayland/wayland_fractional_scale.generated.c
-    wayland-scanner client-header < /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml > src/graphics/wayland/wayland_xdg_decoration.generated.h
-    wayland-scanner private-code  < /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml > src/graphics/wayland/wayland_xdg_decoration.generated.c
+    wayland-scanner client-header < "${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml" > src/graphics/wayland/wayland_xdg_shell.generated.h
+    wayland-scanner private-code  < "${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml" > src/graphics/wayland/wayland_xdg_shell.generated.c
+    wayland-scanner client-header < "${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml" > src/graphics/wayland/wayland_viewporter.generated.h
+    wayland-scanner private-code  < "${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml" > src/graphics/wayland/wayland_viewporter.generated.c
+    wayland-scanner client-header < "${WAYLAND_PROTOCOLS_DIR}/staging/fractional-scale/fractional-scale-v1.xml" > src/graphics/wayland/wayland_fractional_scale.generated.h
+    wayland-scanner private-code  < "${WAYLAND_PROTOCOLS_DIR}/staging/fractional-scale/fractional-scale-v1.xml" > src/graphics/wayland/wayland_fractional_scale.generated.c
+    wayland-scanner client-header < "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" > src/graphics/wayland/wayland_xdg_decoration.generated.h
+    wayland-scanner private-code  < "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" > src/graphics/wayland/wayland_xdg_decoration.generated.c
 elif [ -v x11 ]; then
     echo "X11 backend"
     graphics_libraries="${x11_libraries}"
