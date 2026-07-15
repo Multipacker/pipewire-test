@@ -9,9 +9,15 @@ on your distro.
 * X11: `xcb`, `xcb-cursor`, `egl`, `xkbcomon-x11`, `xkbcommon`, `pipewire`
 * Wayland: `wayland`, `wayland-protocols`, `egl`, `xkbcommon`, `pipewire`
 
-You will also need clang. Navigate to the project root and run
-`scripts/build_clang.sh`. The build script will try to detect which window
+You will also need `clang` and `pkg-config`. Navigate to the project root and
+run `scripts/build_clang.sh`. The build script will try to detect which window
 server you are currently running and will choose the backend that matches that.
 You can override this by manually specifying either `wayland` or `x11` on the
 command line when running the script. If you want a release build, append
 `release` before running the build script.
+
+### On a Nix system
+Run `nix run github:Multipacker/pipework` or `nix run
+github:Multipacker/pipework#pipework-wayland` for the Wayland version and `nix
+run github:Multipacker/pipework#pipework-x11` for the X11 version.
+
