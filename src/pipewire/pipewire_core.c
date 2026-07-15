@@ -1900,7 +1900,18 @@ internal Void pipewire_stream_param_changed(Void *data, U32 id, const struct spa
         good &= entity->format.media_type == SPA_MEDIA_TYPE_audio && entity->format.media_subtype == SPA_MEDIA_SUBTYPE_raw;
 
         if (good) {
-            spa_format_audio_raw_parse(param, &entity->format.info.raw);
+            good = spa_format_audio_raw_parse(param, &entity->format.info.raw) >= 0;
+        }
+
+        if (good) {
+            if (entity->arena) {
+                arena_destroy(entity->arena);
+            }
+
+            U64 sample_count = entity->format.info.raw.channels * u64_ceil_to_power_of_2(entity->format.info.raw.rate);
+            U64 arena_size = sample_count * sizeof(F32) + sizeof(Arena);
+            entity->arena = arena_create_reserve(arena_size);
+            entity->channel_data = arena_push_array(entity->arena, F32, sample_count);
         }
     }
 }
@@ -1908,25 +1919,21 @@ internal Void pipewire_stream_param_changed(Void *data, U32 id, const struct spa
 internal Void pipewire_stream_process(Void *userdata) {
     prof_function_begin();
     Pipewire_Entity *entity = userdata;
-    printf("%p\n", (Void *) entity);
+    //printf("%p\n", (Void *) entity);
     struct pw_buffer *buffer = pw_stream_dequeue_buffer(entity->capture);
     if (buffer) {
         struct spa_data data = buffer->buffer->datas[0];
         F32 *samples = data.data;
         if (samples) {
-            U32 channel_count = u32_min(entity->format.info.raw.channels, array_count(entity->channel_volumes));
-            U32 sample_count  = data.chunk->size / sizeof(F32);
+            U32 sample_count         = data.chunk->size / sizeof(F32);
+            U64 sample_capacity      = entity->format.info.raw.channels * u64_ceil_to_power_of_2(entity->format.info.raw.rate);
+            U64 samples_to_copy      = u64_min(sample_count, sample_capacity);
+            U64 first_sample_to_copy = sample_count - samples_to_copy;
+            U64 samples_to_move      = sample_capacity - samples_to_copy;
+            U64 first_sample_to_move = samples_to_copy;
 
-            for (U32 channel = 0; channel < channel_count; ++channel) {
-                F32 max = 0.0f;
-
-                for (U32 n = channel; n < sample_count; n += channel_count) {
-                    max = f32_max(max, f32_abs(samples[n]));
-                }
-
-                entity->channel_volumes[channel] = max;
-                printf("%u: %f\n", channel, max);
-            }
+            memory_move(entity->channel_data,                   &entity->channel_data[first_sample_to_move], samples_to_move * sizeof(F32));
+            memory_copy(&entity->channel_data[samples_to_move], &samples[first_sample_to_copy],              samples_to_copy * sizeof(F32));
         }
 
         pw_stream_queue_buffer(entity->capture, buffer);

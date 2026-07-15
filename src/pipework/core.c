@@ -1978,6 +1978,51 @@ internal BUILD_TAB_FUNCTION(build_graph_tab) {
                 V2F32 position_post_drag = v2f32_add(position_pre_drag, ui_drag_delta());
                 graph_node->position = position_post_drag;
             }
+
+            // NOTE(simon): Gather sample history and average across channels.
+            // FIXME(simon): Using entities is not thread safe! They could disappear at any moment.
+            Pipewire_Entity *entity = pipewire_entity_from_handle(node->entity);
+            if (node_input.flags & UI_InputFlag_Hovering && !pipewire_entity_is_nil(entity) && entity->channel_data) {
+                F32 graph_width  = ui_size_ems(20.0f, 1.0f).value;
+                F32 graph_height = ui_size_ems(5.0f, 1.0f).value;
+                U64 channels = entity->format.info.raw.channels;
+                U64 samples = u64_ceil_to_power_of_2(entity->format.info.raw.rate);
+
+                ui_extra_box_flags_next(UI_BoxFlag_DrawBackground | UI_BoxFlag_DrawBorder | UI_BoxFlag_DrawDropShadow);
+
+                ui_tooltip(node_box->key)
+                ui_width(ui_size_children_sum(1.0f))
+                ui_height(ui_size_children_sum(1.0f))
+                ui_column()
+                ui_width(ui_size_pixels(graph_width, 1.0f))
+                ui_height(ui_size_pixels(graph_height, 1.0f))
+                for (U64 channel = 0; channel < channels; ++channel) {
+                    UI_Box *sample_graph = ui_create_box(0);
+                    Draw_List *graph = draw_list_create();
+                    draw_list_scope(graph) {
+                        F32 previous_linear_sample = entity->channel_data[channel];
+                        for (F32 x = 1.0f; x < graph_width; x += 0.1f) {
+                            U64 sample_index = u64_min(f32_round_to_u32(x / graph_width * (F32) samples), samples);
+                            F32 sample = entity->channel_data[channels * sample_index + channel];
+                            F32 linear_sample = f32_cbrt(sample);
+
+                            V2F32 previous_position = v2f32(
+                                x - 0.1f,
+                                graph_height / 2.0f + previous_linear_sample * graph_height / 2.0f
+                            );
+                            V2F32 position = v2f32(
+                                x,
+                                graph_height / 2.0f + linear_sample * graph_height / 2.0f
+                            );
+
+                            draw_line(previous_position, position, color_from_theme(ThemeColor_Text), 1.0f, 1.0f, 1.0f);
+
+                            previous_linear_sample = linear_sample;
+                        }
+                    }
+                    ui_box_set_draw_list(sample_graph, graph);
+                }
+            }
         }
 
         // NOTE(simon): Draw connections.

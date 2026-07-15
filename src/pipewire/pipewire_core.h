@@ -256,6 +256,8 @@ struct Pipewire_Entity {
 
     struct spa_audio_info format;
     F32 channel_volumes[SPA_AUDIO_MAX_CHANNELS];
+    Arena *arena;
+    F32 *channel_data;
 
     // NOTE(simon): Pipewire handles.
     struct pw_proxy  *proxy;
